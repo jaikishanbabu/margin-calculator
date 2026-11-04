@@ -69,3 +69,9 @@ status updates on uploads are allowed.
    file carries an explicit cycle field under a name not yet recognised, it is still recorded verbatim in
    `source_meta`, and the admin-entered cycle is required.
 4. Backups include password *hashes* (needed to restore accounts) — the bucket is private.
+
+## Incident: credentials shown in chat (2026-11-04)
+Staging credentials were printed in the build chat. Response: the `margin_app` login was disabled and its
+password wiped the same day; the printed SuperAdmin password and ops token were never configured anywhere and
+must not be used. Deployment now avoids the pattern: Render generates `JWT_SECRET` and `OPS_TOKEN`, the owner
+sets the DB and SuperAdmin passwords in the dashboards, and only the public staging URL is shared.
