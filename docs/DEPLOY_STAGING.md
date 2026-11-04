@@ -13,7 +13,7 @@ Staging = Render free web service (branch `develop`) + Supabase free project `ma
 ## 1. Supabase: two values to copy
 1. **Database connection (restricted app role)** — supabase.com → project *margin-calculator-staging* →
    **Connect** (top bar) → **Session pooler** → copy the URI. It looks like
-   `postgresql://postgres.nlubvmkdvrjgsvvxfvxm:[YOUR-PASSWORD]@aws-…-ap-south-1.pooler.supabase.com:5432/postgres`
+   `postgresql://postgres.nlubvmkdvrjgsvvxfvxm:<YOUR PASSWORD>@aws-…-ap-south-1.pooler.supabase.com:5432/postgres`
    Change it to:
    `postgresql://margin_app.nlubvmkdvrjgsvvxfvxm:<margin_app password>@<same host>:5432/postgres?sslmode=require`
    This is `DATABASE_URL`. (Use the *session* pooler: Render's free tier has no IPv6 for the direct host.)
