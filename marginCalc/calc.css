@@ -1,0 +1,5 @@
+body { margin:0; font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f6f7f9; color:#17202a; }
+.card { max-width:560px; margin:24px auto; background:#fff; border:1px solid #e3e7ec; border-radius:10px; padding:20px; }
+h1 { font-size:20px; margin:0 0 10px; }
+.hint { color:#5d6b7a; font-size:13px; }
+li { margin:4px 0; } .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:#fff8c5; color:#9a6700; margin-left:6px; }

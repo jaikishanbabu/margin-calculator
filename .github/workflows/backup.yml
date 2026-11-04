@@ -1,0 +1,27 @@
+# Weekly database backup export + restore test on staging.
+name: Staging backup + restore test
+
+on:
+  schedule:
+    - cron: "41 20 * * 6"    # Sunday 02:11 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    if: vars.STAGING_URL != ''
+    steps:
+      - name: Wake the service (Render cold start)
+        run: |
+          for i in 1 2 3 4 5 6; do curl -sf --max-time 90 "${{ vars.STAGING_URL }}/api/health" && break; sleep 30; done
+      - name: Backup
+        run: |
+          code=$(curl -s -o b.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "${{ vars.STAGING_URL }}/api/ops/backup")
+          cat b.json; [ "$code" = "200" ] || { echo "::error::Backup failed (HTTP $code)"; exit 1; }
+      - name: Restore test
+        run: |
+          code=$(curl -s -o r.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "${{ vars.STAGING_URL }}/api/ops/restore-test")
+          cat r.json; [ "$code" = "200" ] || { echo "::error::Restore test failed (HTTP $code)"; exit 1; }

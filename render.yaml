@@ -1,0 +1,41 @@
+# Render Blueprint - STAGING ONLY (branch: develop).
+# Production is added in Stage 6, deploying from `main` only after an approved PR.
+#
+# Secrets marked `sync: false` are typed into Render's dashboard when the Blueprint is created.
+# They are never stored in this repository.
+services:
+  - type: web
+    name: margin-engine-staging
+    runtime: python
+    plan: free
+    region: singapore
+    branch: develop
+    autoDeploy: true
+    buildCommand: pip install -r engineFolder/requirements.txt
+    startCommand: cd engineFolder && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: APP_ENV
+        value: staging
+      - key: SERVE_STATIC
+        value: "1"
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        value: https://nlubvmkdvrjgsvvxfvxm.supabase.co
+      - key: SUPABASE_BUCKET
+        value: margin-archive
+      - key: SUPERADMIN_USERNAME
+        value: superadmin
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL          # restricted margin_app login via the Supabase session pooler
+        sync: false
+      - key: SUPABASE_SERVICE_KEY  # Supabase secret key (storage only)
+        sync: false
+      - key: SUPERADMIN_PASSWORD
+        sync: false
+      - key: OPS_TOKEN             # must equal the GitHub secret STAGING_OPS_TOKEN
+        sync: false

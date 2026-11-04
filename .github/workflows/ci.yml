@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests-sqlite:
+    name: Tests (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r engineFolder/requirements-dev.txt
+      - run: cd engineFolder && python -m pytest -v
+
+  tests-postgres:
+    name: Tests (Postgres, restricted app role)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: ci-owner-pass }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: ci-owner-pass
+      TEST_PG_OWNER_URL: postgresql://postgres:ci-owner-pass@localhost:5432/postgres
+      TEST_PG_APP_URL: postgresql://margin_app:ci-app-pass@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r engineFolder/requirements-dev.txt
+      - name: Create Supabase-like API roles and apply migrations
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;"
+          for f in engineFolder/migrations/postgres/*.sql; do psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"; done
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE margin_app WITH LOGIN PASSWORD 'ci-app-pass';"
+      - name: Compromised app credential cannot touch the audit log
+        run: |
+          psql -h localhost -U postgres -At -v ON_ERROR_STOP=1 -f engineFolder/tests/pg/privilege_check.sql | tee privcheck.txt
+          if grep -q '^ALLOWED' privcheck.txt; then echo "::error::app role was allowed a forbidden action"; exit 1; fi
+          if grep -q 'true' privcheck.txt; then echo "::error::app role holds a forbidden privilege"; exit 1; fi
+          # and directly, logged in AS margin_app:
+          for q in "UPDATE margin.audit_log SET detail='x'" "DELETE FROM margin.audit_log" "TRUNCATE margin.audit_log" "DELETE FROM margin.uploads" "SET ROLE postgres"; do
+            if PGPASSWORD=ci-app-pass psql -h localhost -U margin_app -d postgres -v ON_ERROR_STOP=1 -c "$q" 2>/dev/null; then
+              echo "::error::margin_app was allowed: $q"; exit 1; fi
+            echo "refused as expected: $q"
+          done
+      - run: cd engineFolder && python -m pytest -v
+
+  secrets-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

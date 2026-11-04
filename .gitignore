@@ -1,0 +1,12 @@
+# secrets and local data - never commit
+.env
+.env.*
+*.pem
+engineFolder/data/
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store

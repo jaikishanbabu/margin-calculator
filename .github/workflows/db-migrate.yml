@@ -1,0 +1,28 @@
+# Manual: apply database migrations as the schema owner.
+# Owner credentials live ONLY in the GitHub environment secret (never on Render).
+name: DB migrate (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment"
+        required: true
+        type: choice
+        options: [staging]
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install psycopg2-binary==2.9.10
+      - run: cd engineFolder && python -m app.migrate
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}

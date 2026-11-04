@@ -1,0 +1,14 @@
+# Use gitleaks' default rules; allow only the throw-away credentials used by CI/test fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Disposable test-only values (CI Postgres container, unit-test fixtures)"
+regexes = [
+  '''ci-owner-pass''',
+  '''ci-app-pass''',
+  '''test-ops-token-[0-9a-f]+''',
+  '''Test-Super-Pass-123!''',
+  '''test-service-key''',
+  '''Smoke-Test-Pass-1!''',
+]

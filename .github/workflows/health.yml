@@ -1,0 +1,37 @@
+# Daily health check + alert. This is MONITORING ONLY: it does not guarantee that the
+# Supabase free project won't be paused (Supabase decides that from overall activity).
+# A failed run makes GitHub email the repo owner.
+name: Staging health check
+
+on:
+  schedule:
+    - cron: "17 3 * * *"     # 08:47 IST daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    if: vars.STAGING_URL != ''
+    steps:
+      - name: Deep health check (allows for Render cold start)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o health.json -w "%{http_code}" --max-time 90 "${{ vars.STAGING_URL }}/api/health?deep=1" || true)
+            [ "$code" = "200" ] && break
+            echo "attempt $i: HTTP $code - waiting"; sleep 30
+          done
+          cat health.json || true
+          [ "$code" = "200" ] || { echo "::error::Staging unhealthy (HTTP $code). Supabase may be paused or Render down."; exit 1; }
+          python3 - <<'PY'
+          import json, sys
+          h = json.load(open("health.json"))
+          b = h.get("backup") or {}
+          if b.get("backup_overdue"):
+              print("::error::No successful backup in the last 7 days"); sys.exit(1)
+          if b.get("last_restore_test_ok") is False:
+              print("::error::Last restore test failed"); sys.exit(1)
+          print("healthy:", h)
+          PY

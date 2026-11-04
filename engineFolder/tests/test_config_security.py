@@ -1,0 +1,103 @@
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from app import config
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def _set(monkeypatch, **kv):
+    base = dict(APP_ENV="staging", IS_DEV=False, JWT_SECRET="j" * 40, SUPERADMIN_PASSWORD="S" * 16, OPS_TOKEN="o" * 40,
+                DATABASE_URL="postgresql://x", STORAGE_BACKEND="supabase", SUPABASE_URL="https://x.supabase.co",
+                SUPABASE_SERVICE_KEY="k", CORS_ORIGINS=[])
+    base.update(kv)
+    for k, v in base.items():
+        monkeypatch.setattr(config, k, v)
+
+
+def test_valid_staging_config_passes(monkeypatch):
+    _set(monkeypatch)
+    config.validate()
+
+
+@pytest.mark.parametrize("override,msg", [
+    ({"JWT_SECRET": "short"}, "JWT_SECRET"),
+    ({"SUPERADMIN_PASSWORD": "weak"}, "SUPERADMIN_PASSWORD"),
+    ({"OPS_TOKEN": ""}, "OPS_TOKEN"),
+    ({"DATABASE_URL": ""}, "DATABASE_URL"),
+    ({"STORAGE_BACKEND": "local"}, "ephemeral"),
+    ({"SUPABASE_SERVICE_KEY": ""}, "SUPABASE"),
+    ({"CORS_ORIGINS": ["*"]}, "CORS"),
+])
+def test_unsafe_staging_config_refuses_to_start(monkeypatch, override, msg):
+    _set(monkeypatch, **override)
+    with pytest.raises(config.ConfigError, match=msg):
+        config.validate()
+
+
+SECRET_PATTERNS = [
+    r"sb_secret_[A-Za-z0-9_-]{10,}",                          # Supabase secret keys
+    r"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZ",  # legacy Supabase service JWT
+    r"postgres(ql)?://[^\s:@/]+:[^\s@/]{6,}@",                # DB URL with a password
+    r"-----BEGIN (RSA |EC )?PRIVATE KEY-----",
+    r"ghp_[A-Za-z0-9]{30,}", r"rnd_[A-Za-z0-9]{20,}",          # GitHub / Render tokens
+    r"GOCSPX-[A-Za-z0-9_-]{20,}",                             # Google OAuth client secret
+]
+
+
+TEST_ONLY_VALUES = ("ci-owner-pass", "ci-app-pass")  # disposable CI container passwords
+
+
+def test_no_secrets_committed():
+    files = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True).stdout.split()
+    hits = []
+    for f in files:
+        p = REPO / f
+        if not p.is_file() or p.stat().st_size > 2_000_000:
+            continue
+        text = p.read_text(errors="ignore")
+        for v in TEST_ONLY_VALUES:
+            text = text.replace(v, "")
+        for pat in SECRET_PATTERNS:
+            if re.search(pat, text):
+                hits.append(f"{f}: {pat}")
+    assert not hits, hits
+
+
+def test_frontends_contain_no_credentials():
+    for folder in ("adminFolder", "marginCalc"):
+        for p in (REPO / folder).rglob("*"):
+            if p.is_file():
+                t = p.read_text(errors="ignore").lower()
+                for word in ("superadmin_password", "service_key", "jwt_secret", "ops_token", "database_url"):
+                    assert word not in t, f"{p}: mentions {word}"
+
+
+def test_env_files_are_gitignored():
+    gi = (REPO / ".gitignore").read_text()
+    assert ".env" in gi and "data/" in gi
+
+
+def test_security_headers(client):
+    r = client.get("/api/health")
+    for h in ("content-security-policy", "x-content-type-options", "x-frame-options", "referrer-policy"):
+        assert h in r.headers
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+def test_errors_do_not_leak_internals(client, monkeypatch):
+    from app import uploads
+    def boom(*a, **k):
+        raise RuntimeError("secret internal detail /etc/x")
+    monkeypatch.setattr(uploads, "listing", boom)
+    from conftest import login
+    r = client.get("/api/admin/uploads", headers=login(client))
+    assert r.status_code == 500 and "secret" not in r.text
+
+
+def test_no_cors_by_default(client):
+    r = client.get("/api/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers

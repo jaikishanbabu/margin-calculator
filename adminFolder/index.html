@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Margin Engine · Admin</title>
+<link rel="stylesheet" href="admin.css">
+<script src="config.js"></script>
+<script src="admin.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Margin Engine <span class="env" id="envBadge"></span></div>
+  <div class="who" id="who"></div>
+</header>
+
+<main>
+  <!-- login -->
+  <section id="loginView" class="card narrow hidden">
+    <h1>Admin login</h1>
+    <form id="loginForm" autocomplete="on">
+      <label>Username<input name="username" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Log in</button>
+      <p class="msg" id="loginMsg"></p>
+    </form>
+  </section>
+
+  <!-- app -->
+  <section id="appView" class="hidden">
+    <nav class="tabs" id="tabs">
+      <button data-tab="upload" class="active">Upload</button>
+      <button data-tab="log">Upload log</button>
+      <button data-tab="audit">Audit log</button>
+      <button data-tab="backups">Backups</button>
+      <button data-tab="users" class="super-only">Admins</button>
+      <button data-tab="account">Account</button>
+    </nav>
+
+    <div class="tab" id="tab-upload">
+      <div class="card">
+        <h2>Upload exchange files</h2>
+        <p class="hint">Pick one or more files. Suggestions come from the file name — check every row.
+          SPAN date and timestamp are read from inside the file; if the file doesn't state its cycle you must enter it.</p>
+        <input type="file" id="filePick" multiple>
+        <div id="queue"></div>
+        <button id="uploadAll" class="hidden">Upload all</button>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-log">
+      <div class="card">
+        <div class="row-between"><h2>Upload log</h2>
+          <select id="logSegment"><option value="">All segments</option></select></div>
+        <div class="table-wrap"><table id="logTable"><thead><tr>
+          <th>#</th><th>Segment</th><th>Type</th><th>Trade date</th><th>Cycle</th><th>File</th>
+          <th>Uploaded by</th><th>Uploaded at (IST)</th><th>Status</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-audit">
+      <div class="card">
+        <div class="row-between"><h2>Audit log</h2><button id="verifyAudit" class="secondary">Verify chain</button></div>
+        <p class="msg" id="auditMsg"></p>
+        <div class="table-wrap"><table id="auditTable"><thead><tr>
+          <th>Seq</th><th>Time (IST)</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-backups">
+      <div class="card">
+        <h2>Backups &amp; restore tests</h2>
+        <p id="backupStatus" class="msg"></p>
+        <div class="super-only btn-row">
+          <button id="runBackup">Run backup now</button>
+          <button id="runRestore" class="secondary">Run restore test</button>
+        </div>
+        <div class="table-wrap"><table id="backupTable"><thead><tr>
+          <th>#</th><th>Kind</th><th>Started (IST)</th><th>Status</th><th>By</th><th>Details</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-users">
+      <div class="card">
+        <h2>Create admin</h2>
+        <form id="newUser" class="grid2">
+          <label>Username<input name="username" required autocapitalize="none" spellcheck="false" pattern="[a-z0-9._-]{3,40}"></label>
+          <label>Full name<input name="full_name"></label>
+          <label>Temporary password<input name="password" type="password" autocomplete="new-password" required minlength="12"></label>
+          <label>Role<select name="role"><option value="admin">Admin</option><option value="superadmin">SuperAdmin</option></select></label>
+          <button type="submit">Create</button>
+          <p class="msg" id="userMsg"></p>
+        </form>
+        <p class="hint">Passwords: 12+ characters with at least 3 of lowercase, uppercase, digit, symbol.</p>
+      </div>
+      <div class="card">
+        <h2>Admins</h2>
+        <div class="table-wrap"><table id="userTable"><thead><tr>
+          <th>User</th><th>Role</th><th>Status</th><th>Created by</th><th>Last login (IST)</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-account">
+      <div class="card narrow">
+        <h2>Change my password</h2>
+        <form id="pwForm">
+          <label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label>
+          <label>New password<input name="new_password" type="password" autocomplete="new-password" required minlength="12"></label>
+          <button type="submit">Change password</button>
+          <p class="msg" id="pwMsg"></p>
+        </form>
+        <button id="logout" class="secondary">Log out</button>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
