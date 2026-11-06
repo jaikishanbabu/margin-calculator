@@ -101,3 +101,24 @@ def test_errors_do_not_leak_internals(client, monkeypatch):
 def test_no_cors_by_default(client):
     r = client.get("/api/health", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in r.headers
+
+
+def test_health_exposes_nothing_sensitive(client, monkeypatch):
+    from app import db as _db
+    r = client.get("/api/health?deep=1")
+    body = r.text
+    assert set(r.json()) <= {"ok", "env", "version", "api", "db", "storage", "backup"}
+    for secret in (config.SUPERADMIN_PASSWORD, config.OPS_TOKEN, "pbkdf2", "postgres", "Traceback"):
+        assert secret not in body
+    # even when the database is down, only a status word comes back
+    monkeypatch.setattr(_db, "query_one", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("password=hunter2 host=db")))
+    r = client.get("/api/health")
+    assert r.status_code == 503 and "hunter2" not in r.text and r.json()["db"] == "unreachable"
+
+
+def test_secrets_never_printed():
+    import re as _re
+    for p in (REPO / "engineFolder" / "app").rglob("*.py"):
+        for line in p.read_text().splitlines():
+            if "print(" in line:
+                assert not _re.search(r"PASSWORD\)|TOKEN\)|SECRET\)|SERVICE_KEY\)|DATABASE_URL\)", line), f"{p}: {line}"

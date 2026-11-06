@@ -74,6 +74,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STORAGE_BACKEND", "local")
     storage.set_store(LocalStore(tmp_path / "archive"))
     auth.reset_throttle()
+    CHANGED.clear()
     db.init()
     auth.ensure_superadmin()
     yield tmp_path
@@ -88,10 +89,27 @@ def client(env):
         yield c
 
 
-def login(client, username="superadmin", password=SUPER_PW):
+CHANGED = {}  # username -> password after the forced first-login change (per test)
+
+
+def changed_password(old):
+    return "Rotated-" + old[::-1] + "-9xZ"
+
+
+def login(client, username="superadmin", password=SUPER_PW, complete_first_login=True):
+    """Log in; if a password change is required, do it (like a real first login) and log in again."""
+    password = CHANGED.get((username, password), password)
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     assert r.status_code == 200, r.text
-    return {"Authorization": "Bearer " + r.json()["token"]}
+    h = {"Authorization": "Bearer " + r.json()["token"]}
+    if complete_first_login and r.json()["user"]["must_change_password"]:
+        new = changed_password(password)
+        rc = client.post("/api/auth/password", json={"current_password": password, "new_password": new}, headers=h)
+        assert rc.status_code == 200, rc.text
+        CHANGED[(username, password)] = new
+        r = client.post("/api/auth/login", json={"username": username, "password": new})
+        h = {"Authorization": "Bearer " + r.json()["token"]}
+    return h
 
 
 def make_admin(client, sa_headers, username="alice", password="Upload-Desk-2026!"):

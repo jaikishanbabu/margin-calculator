@@ -51,7 +51,7 @@ def current_user(request):
     return auth.user_from_token(h[7:].strip())
 
 
-def endpoint(*roles, ops=False):
+def endpoint(*roles, ops=False, allow_pending_password=False):
     """Wrap a handler: auth/role check + uniform error handling."""
     def deco(fn):
         async def wrapper(request: Request):
@@ -65,6 +65,8 @@ def endpoint(*roles, ops=False):
                     user = await run_in_threadpool(current_user, request) if roles else None
                     if roles:
                         auth.require(user, *[r for r in roles if r != "any"])
+                        if user["must_change_password"] and not allow_pending_password:
+                            return err("Change your password before continuing (Account tab)", 403)
                 return await fn(request, user)
             except auth.AuthError as e:
                 return err(str(e), e.status)
@@ -114,12 +116,12 @@ async def login(request, _):
     return ok({"token": auth.make_token(user), "user": auth.public_user(user), "expires_in_hours": config.TOKEN_HOURS})
 
 
-@endpoint("any")
+@endpoint("any", allow_pending_password=True)
 async def me(request, user):
     return ok({"user": auth.public_user(user)})
 
 
-@endpoint("any")
+@endpoint("any", allow_pending_password=True)
 async def change_password(request, user):
     b = await body_json(request)
     await run_in_threadpool(auth.change_own_password, user, b.get("current_password"), b.get("new_password"), client_ip(request))

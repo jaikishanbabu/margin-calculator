@@ -22,12 +22,19 @@ and copy them dashboard-to-dashboard. Share only the public staging URL.
 1. **Database connection (restricted app role)** — supabase.com → project *margin-calculator-staging* →
    **Connect** (top bar) → **Session pooler** → copy the URI. It looks like
    `postgresql://postgres.nlubvmkdvrjgsvvxfvxm:<YOUR PASSWORD>@aws-…-ap-south-1.pooler.supabase.com:5432/postgres`
-   Change it to:
-   `postgresql://margin_app.nlubvmkdvrjgsvvxfvxm:<margin_app password>@<same host>:5432/postgres?sslmode=require`
+   **Copy it exactly — don't type the host or username from memory.** Change only two things:
+   - the username `postgres.nlubvmkdvrjgsvvxfvxm` → `margin_app.nlubvmkdvrjgsvvxfvxm`
+     (keep the `.nlubvmkdvrjgsvvxfvxm` project reference — the shared pooler needs it)
+   - the password placeholder → your new `margin_app` password (if it contains anything other than
+     letters and digits, URL-encode it, e.g. `@` → `%40`, `%` → `%25`, `/` → `%2F`)
+   Then add `?sslmode=require` at the end. Shape:
+   `postgresql://margin_app.nlubvmkdvrjgsvvxfvxm:<password>@<host exactly as copied>:5432/postgres?sslmode=require`
    This is `DATABASE_URL`. (Use the *session* pooler: Render's free tier has no IPv6 for the direct host.)
 2. **Storage key** — Project Settings → **API Keys** → *Secret keys* → create one named `render-staging`
-   → copy (`sb_secret_…`). This is `SUPABASE_SERVICE_KEY`. It cannot read the `margin` tables
-   (verified: `service_key_schema: false`); it is used only for the archive bucket.
+   → copy (`sb_secret_…`). This is `SUPABASE_SERVICE_KEY`. **Backend only — it goes into Render and
+   nowhere else** (never GitHub Pages, never browser JavaScript, never GitHub). It bypasses Row Level
+   Security, so the engine does its own authorization on every request; it also cannot read the `margin`
+   tables (verified: `service_key_schema: false`) and is used only for the archive bucket.
 
 ## 2. Render
 1. dashboard.render.com → **New** → **Blueprint** → connect GitHub → pick `jaikishanbabu/margin-calculator`,
@@ -47,18 +54,34 @@ and copy them dashboard-to-dashboard. Share only the public staging URL.
 |---|---|
 | `margin_app` DB password | SQL Editor `ALTER ROLE margin_app WITH PASSWORD '<new>'` → update Render `DATABASE_URL` |
 | Supabase secret key | API Keys → create new → update Render → delete old |
-| `SUPERADMIN_PASSWORD` | change in Render (the account re-syncs on restart and all its sessions end) |
+| SuperAdmin password | Admin → Account → change password (all sessions end). The Render value is bootstrap/break-glass only |
 | `OPS_TOKEN` | Render → regenerate → update GitHub `STAGING_OPS_TOKEN` |
 | `JWT_SECRET` | Render → regenerate (signs everyone out) |
 
 ## 4. Acceptance run (required before Stage 1 is complete)
-1. Open `<STAGING_URL>/admin/` → log in as `superadmin`.
+1. Open `<STAGING_URL>/admin/` → log in as `superadmin` with the bootstrap password. You are sent to
+   **Account** and must set your own password (16+ chars) before anything else works. From then on the
+   Render `SUPERADMIN_PASSWORD` no longer logs in (it only creates the account once). If you are ever
+   locked out: set `SUPERADMIN_RESET=1` in Render, restart, log in with the Render password, change it,
+   then **delete** `SUPERADMIN_RESET` (the reset is recorded in the audit log).
 2. **Admins** → create one admin. Log in as them in a private tab and upload one real SPAN file
    (enter its cycle) and one ELM/other file.
 3. **Backups** (as superadmin) → **Run backup now**, then **Run restore test** → every check must pass.
 4. GitHub → **Actions** → *Staging backup + restore test* → **Run workflow** → must be green.
 5. GitHub → **Actions** → *Staging health check* → **Run workflow** → must be green.
 6. **Audit log** → **Verify chain** → "Chain intact".
+
+## Staging approval checklist (owner)
+- [ ] Old (revoked) `margin_app` password cannot log in — Claude verified on 2026-11-06: login disabled, no password
+- [ ] `margin_app` holds only its grants — `tests/pg/privilege_check.sql` all REFUSED / false
+- [ ] `JWT_SECRET` and `OPS_TOKEN` show as generated in Render
+- [ ] `SUPERADMIN_PASSWORD` not in logs or frontend (tests: `test_secrets_never_printed`, `test_frontends_contain_no_credentials`)
+- [ ] Supabase secret key exists only in Render
+- [ ] GitHub: variable `STAGING_URL`, secret `STAGING_OPS_TOKEN`
+- [ ] No credentials in git history / CI logs (gitleaks on every push; history checked 2026-11-06)
+- [ ] `/api/health` shows only status words (test: `test_health_exposes_nothing_sensitive`)
+- [ ] Admin API rejects unauthenticated (401) and unauthorized (403) requests
+- [ ] Bootstrap SuperAdmin password changed at first login and no longer works
 
 ## Free-tier behaviour to expect
 - **Render free** sleeps after ~15 min idle; the first request then takes ~30–60 s. Its disk is wiped on

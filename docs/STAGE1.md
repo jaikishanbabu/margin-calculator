@@ -3,7 +3,7 @@
 ## Scope delivered
 | Requirement | Where |
 |---|---|
-| SuperAdmin from server secrets; SuperAdmin creates/disables/unlocks/resets admins | `app/auth.py`, Admin → *Admins* |
+| SuperAdmin bootstrapped once from a server secret, forced change at first login, break-glass reset; SuperAdmin creates/disables/unlocks/resets admins (temporary passwords, forced change) | `app/auth.py`, Admin → *Admins* |
 | Hardened login: PBKDF2, lockout, IP throttle, token invalidation, role checks on every endpoint | `app/auth.py`, `app/main.py` |
 | Upload log: who uploaded what, when, from where, with checksum | `uploads` table, Admin → *Upload log* |
 | Tamper-evident audit log (hash chain + DB permissions + triggers + separate backups) | `app/audit.py`, `migrations/postgres/*` |
@@ -23,14 +23,15 @@ page only states that nothing is validated yet.
 
 ## Test results
 
-### Automated suite — 85 passed (SQLite mode, local run)
+### Automated suite — 95 passed (SQLite mode, local run)
 | File | Tests | Covers |
 |---|---|---|
 | `test_auth.py` | 12 | login, identical failure messages, lockout, IP throttle, 401/403 matrix, password rules, token invalidation on reset/disable, forged/`alg=none` tokens, hashing, auditing |
 | `test_uploads.py` | 22 | provenance from file vs filename, missing/mismatched cycle and date, settlement-flag conflicts, zip bomb, gzip bomb, traversal (4 variants), symlink, nested archive, too many members, encrypted zip, executable/HTML/CSV-as-SPAN, XML entities, size limit, byte-exact archive + manifest, duplicates, replace/supersede, withdraw keeps record + original, provenance immutability, rejected uploads audited |
 | `test_storage.py` | 21 | same contract on local + Supabase backends: round-trip, write-once, not-found, recursive list, delete, unsafe keys, corruption detection, wrong key |
 | `test_backup_audit.py` | 16 | chain valid, app can't edit/delete audit rows, 3 tamper types detected, backup + restore passes, corrupted backup detected, altered originals detected, live log truncated after backup detected, retention pruning, Supabase-backend backup/restore, manifest contents, ops-token protection, health |
-| `test_config_security.py` | 14 | staging refuses weak/missing secrets (7 cases), no secrets in tracked files, no credentials in frontends, `.env` ignored, security headers, no internal error leakage, no CORS by default |
+| `test_bootstrap.py` | 8 | forced first-login change, endpoints blocked until changed, bootstrap password dies, restart doesn't re-apply it, break-glass reset audited, sessions end on change, admins' temporary passwords, password never logged |
+| `test_config_security.py` | 16 | staging refuses weak/missing secrets (7 cases), no secrets in tracked files, health exposes only status words (also when the DB is down), no secret is ever printed, no credentials in frontends, `.env` ignored, security headers, no internal error leakage, no CORS by default |
 
 CI repeats the whole suite on **Postgres 16 logged in as the restricted `margin_app` role**, plus the privilege
 script and direct `psql` attempts as `margin_app`, plus gitleaks. (Run results: see the Actions tab.)

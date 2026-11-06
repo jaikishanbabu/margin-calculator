@@ -6,7 +6,10 @@
   SQLITE_PATH             SQLite file for dev/test (default engineFolder/data/margin.db)
   JWT_SECRET              >= 32 random chars, signs admin login tokens
   SUPERADMIN_USERNAME     default "superadmin"
-  SUPERADMIN_PASSWORD     >= 14 chars outside dev/test
+  SUPERADMIN_PASSWORD     >= 14 chars outside dev/test. BOOTSTRAP ONLY: creates the SuperAdmin once,
+                          who must change it at first login; afterwards it no longer works.
+  SUPERADMIN_RESET        set to 1 (temporarily) to re-apply SUPERADMIN_PASSWORD after a lock-out;
+                          audited, forces another password change; remove it again afterwards
   OPS_TOKEN               >= 32 chars; lets the scheduled GitHub jobs trigger backups / restore tests
   STORAGE_BACKEND         local | supabase            (gdrive arrives in Stage 2)
   LOCAL_STORE_DIR         folder for the local backend (dev/test only)
@@ -36,7 +39,8 @@ SQLITE_PATH = _env("SQLITE_PATH") or str(BASE_DIR / "data" / "margin.db")
 
 JWT_SECRET = _env("JWT_SECRET")
 SUPERADMIN_USERNAME = (_env("SUPERADMIN_USERNAME") or "superadmin").lower()
-SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "")
+SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "")   # bootstrap only: creates the account once
+SUPERADMIN_RESET = _env("SUPERADMIN_RESET") == "1"           # break-glass: re-apply SUPERADMIN_PASSWORD on start
 OPS_TOKEN = _env("OPS_TOKEN")
 
 STORAGE_BACKEND = (_env("STORAGE_BACKEND") or "local").lower()

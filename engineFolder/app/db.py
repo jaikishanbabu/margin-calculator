@@ -13,7 +13,7 @@ from pathlib import Path
 from . import config
 
 MIGRATIONS_DIR = config.BASE_DIR / "migrations"
-REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role"}
+REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role", "003_must_change_password"}
 
 _local = threading.local()
 _pg_pool = None
@@ -128,8 +128,11 @@ def init():
         return
     conn = _sqlite()
     with _lock:
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+        done = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
         for f in sorted((MIGRATIONS_DIR / "sqlite").glob("*.sql")):
-            conn.executescript(f.read_text())
+            if f.stem not in done:
+                conn.executescript(f.read_text())
         conn.commit()
 
 

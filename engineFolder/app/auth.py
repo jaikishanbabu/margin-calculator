@@ -119,25 +119,29 @@ def public_user(u):
     locked = bool(u.get("locked_until") and u["locked_until"] > now().isoformat())
     return {"id": u["id"], "username": u["username"], "full_name": u["full_name"], "role": u["role"],
             "active": bool(u["active"]), "locked": locked, "created_at": u["created_at"],
-            "created_by": u["created_by"], "last_login_at": u["last_login_at"]}
+            "created_by": u["created_by"], "last_login_at": u["last_login_at"],
+            "must_change_password": bool(u.get("must_change_password"))}
 
 
 def ensure_superadmin():
+    """SUPERADMIN_PASSWORD only bootstraps the account. It is never re-applied, except when the
+    break-glass switch SUPERADMIN_RESET=1 is set (audited; forces another password change)."""
     pw = config.SUPERADMIN_PASSWORD
-    if not pw:
-        print("WARNING: SUPERADMIN_PASSWORD not set - SuperAdmin login disabled")
-        return
     name = config.SUPERADMIN_USERNAME
     with db.tx() as c:
         u = c.execute("SELECT * FROM users WHERE username = ?", (name,)).fetchone()
         if not u:
-            c.insert("INSERT INTO users (username, full_name, pw_hash, role, active, created_at, created_by) "
-                     "VALUES (?, 'Super Admin', ?, 'superadmin', 1, ?, 'system')", (name, hash_password(pw), now().isoformat()))
-            audit.append(c, "system", "superadmin_created", name)
-        elif not verify_password(pw, u["pw_hash"]) or u["role"] != "superadmin" or not u["active"]:
-            c.execute("UPDATE users SET pw_hash = ?, role = 'superadmin', active = 1, failed_logins = 0, "
-                      "locked_until = NULL, token_version = token_version + 1 WHERE id = ?", (hash_password(pw), u["id"]))
-            audit.append(c, "system", "superadmin_resynced", "password/role re-synced from SUPERADMIN_PASSWORD")
+            if not pw:
+                print("WARNING: SUPERADMIN_PASSWORD not set - no SuperAdmin account created")
+                return
+            c.insert("INSERT INTO users (username, full_name, pw_hash, role, active, must_change_password, created_at, created_by) "
+                     "VALUES (?, 'Super Admin', ?, 'superadmin', 1, 1, ?, 'system')", (name, hash_password(pw), now().isoformat()))
+            audit.append(c, "system", "superadmin_bootstrapped", f"{name} (must change password at first login)")
+        elif config.SUPERADMIN_RESET and pw:
+            c.execute("UPDATE users SET pw_hash = ?, role = 'superadmin', active = 1, failed_logins = 0, locked_until = NULL, "
+                      "must_change_password = 1, token_version = token_version + 1 WHERE id = ?", (hash_password(pw), u["id"]))
+            audit.append(c, "system", "superadmin_break_glass_reset",
+                         "SUPERADMIN_RESET=1: password re-applied from server secret; change required; remove SUPERADMIN_RESET")
 
 
 def login(username, password, ip=None):
@@ -196,8 +200,8 @@ def create_user(actor, username, password, full_name="", role="admin", ip=None):
     with db.tx() as c:
         if c.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
             raise ValueError("Username already exists")
-        uid = c.insert("INSERT INTO users (username, full_name, pw_hash, role, active, created_at, created_by) "
-                       "VALUES (?, ?, ?, ?, 1, ?, ?)",
+        uid = c.insert("INSERT INTO users (username, full_name, pw_hash, role, active, must_change_password, created_at, created_by) "
+                       "VALUES (?, ?, ?, ?, 1, 1, ?, ?)",
                        (username, (full_name or "")[:80], hash_password(password), role, now().isoformat(), actor["username"]))
         audit.append(c, actor["username"], "user_created", {"username": username, "role": role}, ip)
         return public_user(c.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone())
@@ -210,7 +214,7 @@ def update_user(actor, user_id, active=None, password=None, full_name=None, role
         if not u:
             raise LookupError("User not found")
         if u["username"] == config.SUPERADMIN_USERNAME:
-            raise ValueError("The main SuperAdmin is managed by server settings, not from here")
+            raise ValueError("The main SuperAdmin can't be changed from here (use Account to change its own password)")
         changes, bump = [], False
         if active is not None:
             c.execute("UPDATE users SET active = ? WHERE id = ?", (1 if active else 0, user_id))
@@ -218,7 +222,7 @@ def update_user(actor, user_id, active=None, password=None, full_name=None, role
             bump = bump or not active
         if password:
             check_password_rules(password, u["username"])
-            c.execute("UPDATE users SET pw_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?",
+            c.execute("UPDATE users SET pw_hash = ?, failed_logins = 0, locked_until = NULL, must_change_password = 1 WHERE id = ?",
                       (hash_password(password), user_id))
             changes.append("password reset")
             bump = True
@@ -243,12 +247,17 @@ def update_user(actor, user_id, active=None, password=None, full_name=None, role
 
 def change_own_password(user, old, new, ip=None):
     require(user)
-    if user["username"] == config.SUPERADMIN_USERNAME:
-        raise ValueError("The SuperAdmin password is set on the server (SUPERADMIN_PASSWORD)")
     if not verify_password(old or "", user["pw_hash"]):
         raise ValueError("Current password is wrong")
+    if verify_password(new or "", user["pw_hash"]):
+        raise ValueError("New password must be different from the current one")
+    if user["role"] == "superadmin":
+        if len(new or "") < 16:
+            raise ValueError("SuperAdmin password must be at least 16 characters")
+        if config.SUPERADMIN_PASSWORD and new == config.SUPERADMIN_PASSWORD:
+            raise ValueError("Choose a password different from the deployment bootstrap password")
     check_password_rules(new, user["username"])
     with db.tx() as c:
-        c.execute("UPDATE users SET pw_hash = ?, token_version = token_version + 1 WHERE id = ?",
+        c.execute("UPDATE users SET pw_hash = ?, must_change_password = 0, token_version = token_version + 1 WHERE id = ?",
                   (hash_password(new), user["id"]))
-        audit.append(c, user["username"], "password_changed", "", ip)
+        audit.append(c, user["username"], "password_changed", "first-login change" if user["must_change_password"] else "", ip)

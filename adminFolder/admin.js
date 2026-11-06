@@ -52,13 +52,20 @@
     if (!token) return logout();
     try {
       me = (await api("/api/auth/me")).user;
-      meta = await api("/api/admin/meta");
+      if (!me.must_change_password) meta = await api("/api/admin/meta");
     } catch (e) { return logout(); }
     $("#loginView").classList.add("hidden"); $("#appView").classList.remove("hidden");
     $("#who").textContent = `${me.username} · ${me.role}`;
     document.querySelectorAll(".super-only").forEach(n => n.classList.toggle("hidden", me.role !== "superadmin"));
+    if (me.must_change_password) {
+      document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("hidden", b.dataset.tab !== "account"));
+      showTab("account");
+      setMsg($("#pwMsg"), "You are using a temporary password. Set your own password to continue.", false);
+      return;
+    }
+    document.querySelectorAll("#tabs button").forEach(b => { if (!b.classList.contains("super-only") || me.role === "superadmin") b.classList.remove("hidden"); });
     const segSel = $("#logSegment");
-    if (segSel.options.length === 1) for (const [k, v] of Object.entries(meta.segments)) segSel.append(el("option", { value: k }, `${k} - ${v.name}`));
+    if (segSel.options.length === 1 && meta) for (const [k, v] of Object.entries(meta.segments)) segSel.append(el("option", { value: k }, `${k} - ${v.name}`));
     showTab("upload");
   }
 
