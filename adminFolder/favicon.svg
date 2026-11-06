@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Margin Calculator">
+  <title>Margin Calculator</title>
+  <rect width="64" height="64" rx="16" fill="#3863ff"/>
+  <!-- gauge track -->
+  <path d="M13 42a19 19 0 0 1 38 0" fill="none" stroke="#ffffff" stroke-opacity=".32" stroke-width="6" stroke-linecap="round"/>
+  <!-- used margin -->
+  <path d="M13 42a19 19 0 0 1 26.5-17.5" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <!-- needle -->
+  <path d="M32 42 L43.5 27" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="32" cy="42" r="5.5" fill="#ffffff"/>
+  <circle cx="32" cy="42" r="2.2" fill="#3863ff"/>
+  <!-- base line -->
+  <path d="M18 51h28" stroke="#ffffff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
+</svg>

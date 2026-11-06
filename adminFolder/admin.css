@@ -8,14 +8,13 @@
   --font-head:"Space Grotesk","Inter",system-ui,sans-serif;
   --font-body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
-@media (prefers-color-scheme: dark){
-  :root{
+/* dark theme: follows the device unless the user picked one with the switch */
+:root[data-theme="dark"]{
     --ink:#f2f4f8; --text:#e6e9f0; --muted:#a2a9b6; --faint:#7d8594;
     --border:#2e3546; --line:#252b39; --bg:#0d1017; --panel:#151a24; --track:#2a3142;
     --good:#4ad391; --good-bg:rgba(74,211,145,.10); --bad:#ff8a80; --bad-bg:rgba(255,138,128,.10);
     --warn:#ffb35c; --warn-bg:rgba(255,170,60,.14); --primary-10:rgba(56,99,255,.18); --primary-18:rgba(56,99,255,.32);
   }
-}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);-webkit-font-smoothing:antialiased;font-size:15px}
 .hidden{display:none !important}
@@ -23,7 +22,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body
 /* header */
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px;max-width:1100px;margin:0 auto;padding:22px 16px 0}
 .brand{font-family:var(--font-head);font-weight:700;font-size:18px;color:var(--ink);letter-spacing:-.2px}
-.env{font-family:var(--font-body);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn);margin-left:8px;vertical-align:middle}
+.env{font-family:var(--font-body);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn);vertical-align:middle}
 .who{font-size:13px;color:var(--muted);text-align:right}
 
 main{max-width:1100px;margin:0 auto;padding:24px 16px 80px}
@@ -98,3 +97,27 @@ td.detail{max-width:360px;word-break:break-word;font-family:ui-monospace,Menlo,m
 .pill{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--panel);color:var(--muted)}
 .pill.ok{background:var(--good-bg);color:var(--good)} .pill.bad{background:var(--bad-bg);color:var(--bad)} .pill.warn{background:var(--warn-bg);color:var(--warn)}
 .src{font-size:11px;color:var(--faint);margin-top:2px}
+
+/* header: logo + theme switch */
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:32px;height:32px;border-radius:9px;flex:none}
+.top-right{display:flex;align-items:center;gap:12px}
+.theme-toggle{width:40px;height:40px;padding:0;border-radius:50%;border:1px solid var(--border);background:var(--bg);color:var(--muted);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:none;box-shadow:0 1px 2px rgba(16,24,40,.06)}
+.theme-toggle:hover{border-color:var(--primary);color:var(--primary)}
+.theme-toggle svg{width:20px;height:20px}
+.theme-toggle .i-sun{display:none}
+[data-theme="dark"] .theme-toggle .i-sun{display:block}
+[data-theme="dark"] .theme-toggle .i-moon{display:none}
+@media (max-width:520px){
+  .top{padding:16px 14px 0;gap:8px}
+  .brand{font-size:15px;gap:8px;min-width:0}
+  .brand span:nth-child(2){white-space:nowrap}
+  .logo{width:28px;height:28px;border-radius:8px}
+  .env{font-size:9.5px;padding:2px 6px}
+  .top-right{gap:8px}
+  .theme-toggle{width:34px;height:34px}
+  .theme-toggle svg{width:17px;height:17px}
+  .who{font-size:12px;max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+@media (max-width:380px){ .brand span:nth-child(2){white-space:normal} }
