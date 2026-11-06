@@ -69,3 +69,15 @@ def test_bootstrap_password_never_logged(client):
     assert SUPER_PW not in blob
     blob = " ".join(str(v) for r in db.query("SELECT * FROM users") for v in r.values())
     assert SUPER_PW not in blob
+
+
+def test_bootstrap_value_whitespace_is_ignored(monkeypatch):
+    import importlib, os
+    monkeypatch.setenv("SUPERADMIN_PASSWORD", "  Padded-Bootstrap-Pass-1 \n")
+    from app import config as cfg
+    importlib.reload(cfg)
+    try:
+        assert cfg.SUPERADMIN_PASSWORD == "Padded-Bootstrap-Pass-1"
+    finally:
+        monkeypatch.setenv("SUPERADMIN_PASSWORD", SUPER_PW)
+        importlib.reload(cfg)

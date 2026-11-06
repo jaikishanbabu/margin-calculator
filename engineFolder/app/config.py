@@ -39,7 +39,7 @@ SQLITE_PATH = _env("SQLITE_PATH") or str(BASE_DIR / "data" / "margin.db")
 
 JWT_SECRET = _env("JWT_SECRET")
 SUPERADMIN_USERNAME = (_env("SUPERADMIN_USERNAME") or "superadmin").lower()
-SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "")   # bootstrap only: creates the account once
+SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "").strip()   # bootstrap only (stray spaces/newlines from copy-paste removed): creates the account once
 SUPERADMIN_RESET = _env("SUPERADMIN_RESET") == "1"           # break-glass: re-apply SUPERADMIN_PASSWORD on start
 OPS_TOKEN = _env("OPS_TOKEN")
 
