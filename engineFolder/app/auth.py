@@ -52,15 +52,17 @@ def _dummy_verify(pw):
     verify_password(pw, _DUMMY_HASH)
 
 
+MIN_PASSWORD_LENGTH = 8
+
+
 def check_password_rules(pw: str, username=""):
     pw = pw or ""
-    if len(pw) < 12:
-        raise ValueError("Password must be at least 12 characters")
+    if len(pw) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if len(pw) > 128:
+        raise ValueError("Password is too long (max 128 characters)")
     if username and username.lower() in pw.lower():
         raise ValueError("Password must not contain the username")
-    classes = sum(bool(re.search(p, pw)) for p in (r"[a-z]", r"[A-Z]", r"\d", r"[^A-Za-z0-9]"))
-    if classes < 3:
-        raise ValueError("Password needs at least 3 of: lowercase, uppercase, digit, symbol")
 
 
 # ---------- per-IP throttle (in memory; DB lockout below survives restarts) ----------
@@ -252,8 +254,6 @@ def change_own_password(user, old, new, ip=None):
     if verify_password(new or "", user["pw_hash"]):
         raise ValueError("New password must be different from the current one")
     if user["role"] == "superadmin":
-        if len(new or "") < 16:
-            raise ValueError("SuperAdmin password must be at least 16 characters")
         if config.SUPERADMIN_PASSWORD and new == config.SUPERADMIN_PASSWORD:
             raise ValueError("Choose a password different from the deployment bootstrap password")
     check_password_rules(new, user["username"])

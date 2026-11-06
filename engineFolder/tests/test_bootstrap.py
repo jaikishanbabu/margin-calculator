@@ -29,9 +29,16 @@ def test_restart_does_not_reapply_bootstrap_password(client):
     assert _raw_login(client, SUPER_PW).status_code == 401
 
 
+def test_superadmin_eight_character_password_ok(client):
+    h = {"Authorization": "Bearer " + _raw_login(client, SUPER_PW).json()["token"]}
+    r = client.post("/api/auth/password", json={"current_password": SUPER_PW, "new_password": "Mumbai26"}, headers=h)
+    assert r.status_code == 200, r.text
+    assert _raw_login(client, "Mumbai26").status_code == 200
+
+
 def test_new_password_must_differ_and_be_strong(client):
     h = {"Authorization": "Bearer " + _raw_login(client, SUPER_PW).json()["token"]}
-    for bad in [SUPER_PW, "Short-1a!", "only-lower-case-long-enough"]:
+    for bad in [SUPER_PW, "Short1a", "has-superadmin-in-it"]:
         r = client.post("/api/auth/password", json={"current_password": SUPER_PW, "new_password": bad}, headers=h)
         assert r.status_code == 400, bad
 

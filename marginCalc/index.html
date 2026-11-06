@@ -3,17 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Margin Calculator</title>
+<title>F&amp;O Margin Calculator | Laabh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="calc.css">
 <script src="config.js"></script>
 <script src="calc.js" defer></script>
 </head>
 <body>
-<main class="card">
+<main class="wrap">
+  <div class="eyebrow">Calculators · Trading</div>
   <h1>F&amp;O Margin Calculator</h1>
-  <p id="status">Checking status…</p>
-  <ul id="segments"></ul>
-  <p class="hint">Margins are shown only for segments whose calculations have passed validation against exchange files and broker test cases.</p>
+  <p class="lead">SPAN and exposure margins for NSE, BSE, MCX and currency derivatives, calculated from the exchanges' own risk files.</p>
+  <div class="card">
+    <h2>Coming soon</h2>
+    <p id="status" class="muted">Checking status…</p>
+    <ul id="segments"></ul>
+    <p class="fine">Margins are shown only for segments whose calculations have passed validation against exchange files and broker test cases.</p>
+  </div>
 </main>
 </body>
 </html>

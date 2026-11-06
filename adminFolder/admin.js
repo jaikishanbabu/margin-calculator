@@ -55,7 +55,7 @@
       if (!me.must_change_password) meta = await api("/api/admin/meta");
     } catch (e) { return logout(); }
     $("#loginView").classList.add("hidden"); $("#appView").classList.remove("hidden");
-    $("#who").textContent = `${me.username} · ${me.role}`;
+    $("#who").textContent = me.username === me.role ? me.username : `${me.username} · ${me.role}`;
     document.querySelectorAll(".super-only").forEach(n => n.classList.toggle("hidden", me.role !== "superadmin"));
     if (me.must_change_password) {
       document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("hidden", b.dataset.tab !== "account"));
@@ -66,6 +66,7 @@
     document.querySelectorAll("#tabs button").forEach(b => { if (!b.classList.contains("super-only") || me.role === "superadmin") b.classList.remove("hidden"); });
     const segSel = $("#logSegment");
     if (segSel.options.length === 1 && meta) for (const [k, v] of Object.entries(meta.segments)) segSel.append(el("option", { value: k }, `${k} - ${v.name}`));
+    fillSegments(); refreshUploadForm();
     showTab("upload");
   }
 
@@ -88,80 +89,80 @@
   }
   $("#tabs").addEventListener("click", (ev) => { if (ev.target.dataset.tab) showTab(ev.target.dataset.tab); });
 
-  // ------------------------------------------------------------ upload queue
-  const queue = [];
-  $("#filePick").addEventListener("change", async (ev) => {
-    for (const file of ev.target.files) {
-      let s = {};
-      try { s = await api("/api/admin/suggest", { method: "POST", json: { filename: file.name } }); } catch (_) {}
-      queue.push({ file, s, node: null });
-    }
-    ev.target.value = "";
-    renderQueue();
-  });
+  // ------------------------------------------------------------ upload form: segment -> file -> attach
+  const upSeg = $("#upSegment"), upType = $("#upType"), upFile = $("#upFile"), upDate = $("#upDate"),
+        upCycle = $("#upCycle"), upBtn = $("#upBtn");
 
-  function typeOptions(seg, selected) {
-    const sf = meta.segment_files[seg] || { required: [], optional: [] };
-    return [...sf.required, ...sf.optional].map(t =>
-      el("option", { value: t, selected: t === selected }, meta.file_types[t].label + (sf.required.includes(t) ? " *" : "")));
+  function fillSegments() {
+    if (upSeg.options.length > 1) return;
+    for (const [k, v] of Object.entries(meta.segments)) upSeg.append(el("option", { value: k }, `${v.name} (${k})`));
   }
 
-  function renderQueue() {
-    const box = $("#queue"); box.textContent = "";
-    queue.forEach((q, i) => {
-      if (q.done) return;
-      const seg = el("select", { name: "segment" }, el("option", { value: "" }, "Segment…"),
-        Object.entries(meta.segments).map(([k, v]) => el("option", { value: k, selected: k === q.s.segment }, `${k} - ${v.name}`)));
-      const type = el("select", { name: "file_type" });
-      const fillTypes = () => { type.textContent = ""; type.append(el("option", { value: "" }, "File type…"), ...typeOptions(seg.value, q.s.file_type)); toggleCycle(); };
-      const dateIn = el("input", { type: "date", name: "trade_date" });
-      if (q.s.trade_date_hint) dateIn.value = `${q.s.trade_date_hint.slice(0, 4)}-${q.s.trade_date_hint.slice(4, 6)}-${q.s.trade_date_hint.slice(6)}`;
-      const cycleIn = el("input", { name: "cycle", placeholder: "e.g. i1, i2 … s", maxlength: "12", autocapitalize: "none" });
-      if (q.s.cycle_hint) cycleIn.value = q.s.cycle_hint;
-      const cycleLabel = el("label", {}, "SPAN cycle (as published)", cycleIn,
-        el("span", { class: "src" }, q.s.cycle_hint ? "suggested from filename — confirm" : "required unless the file states it"));
-      const toggleCycle = () => cycleLabel.classList.toggle("hidden", type.value !== "span");
-      seg.addEventListener("change", fillTypes); type.addEventListener("change", toggleCycle);
-      const replace = el("input", { type: "checkbox" });
-      const status = el("p", { class: "msg" });
-      const remove = el("button", { class: "secondary small", type: "button", onclick: () => { queue.splice(i, 1); renderQueue(); } }, "Remove");
-      q.node = { seg, type, dateIn, cycleIn, replace, status };
-      box.append(el("div", { class: "qitem" },
-        el("div", { class: "fname" }, `${q.file.name} (${(q.file.size / 1048576).toFixed(2)} MB)`),
-        el("div", { class: "qgrid" },
-          el("label", {}, "Segment", seg), el("label", {}, "File type", type),
-          el("label", {}, "Trading date", dateIn, el("span", { class: "src" }, "SPAN: read from file; others: confirm")),
-          cycleLabel),
-        el("label", { class: "check" }, replace, "Replace an existing file for the same date/cycle"),
-        el("div", { class: "row-between" }, status, remove)));
-      fillTypes();
-    });
-    $("#uploadAll").classList.toggle("hidden", !queue.some(q => !q.done));
-  }
-
-  $("#uploadAll").addEventListener("click", async () => {
-    $("#uploadAll").disabled = true;
-    for (const q of queue) {
-      if (q.done || !q.node) continue;
-      const n = q.node;
-      if (!n.seg.value || !n.type.value) { setMsg(n.status, "Choose segment and file type"); continue; }
-      const fd = new FormData();
-      fd.append("file", q.file, q.file.name);
-      fd.append("segment", n.seg.value); fd.append("file_type", n.type.value);
-      fd.append("trade_date", (n.dateIn.value || "").replaceAll("-", ""));
-      if (n.type.value === "span") fd.append("cycle", n.cycleIn.value.trim());
-      if (n.replace.checked) fd.append("replace", "1");
-      setMsg(n.status, "Uploading…", true);
-      try {
-        const r = await api("/api/admin/uploads", { method: "POST", body: fd });
-        const u = r.upload;
-        setMsg(n.status, `✓ #${u.id} archived · ${u.segment} ${fmtDate(u.trade_date)} (${u.trade_date_source})` +
-          (u.cycle ? ` · cycle ${u.cycle} (${u.cycle_source})` : "") + ` · sha256 ${u.sha256.slice(0, 12)}…`, true);
-        q.done = true;
-      } catch (e) { setMsg(n.status, e.message); }
+  function refreshUploadForm() {
+    const seg = upSeg.value;
+    const sf = meta.segment_files[seg];
+    // 2. file types for the chosen segment
+    const keep = upType.value;
+    upType.textContent = "";
+    if (!sf) {
+      upType.append(el("option", { value: "" }, "Choose segment first"));
+      upType.disabled = true;
+      $("#segFiles").classList.add("hidden");
+    } else {
+      upType.append(el("option", { value: "" }, "Choose file…"));
+      for (const t of sf.required) upType.append(el("option", { value: t, selected: t === keep }, meta.file_types[t].label + "  · required"));
+      for (const t of sf.optional) upType.append(el("option", { value: t, selected: t === keep }, meta.file_types[t].label + "  · optional"));
+      upType.disabled = false;
+      const box = $("#segFiles"); box.textContent = "";
+      box.append(...sf.required.map(t => el("span", { class: "req" }, meta.file_types[t].label)),
+                 ...sf.optional.map(t => el("span", {}, meta.file_types[t].label)));
+      box.classList.remove("hidden");
     }
-    $("#uploadAll").disabled = false;
-    if (queue.every(q => q.done)) { queue.length = 0; setTimeout(renderQueue, 4000); }
+    // per-file details
+    const t = upType.value;
+    const isReq = sf && sf.required.includes(t);
+    $("#upReqTag").classList.toggle("hidden", !t || !isReq);
+    $("#upOptTag").classList.toggle("hidden", !t || isReq);
+    $("#upTypeHint").textContent = t ? "Expected: " + (meta.file_hints[`${seg}:${t}`] || meta.file_types[t].label) : "";
+    const isSpan = t === "span";
+    $("#upCycleWrap").classList.toggle("hidden", !isSpan);
+    $("#upDateHint").textContent = isSpan
+      ? "Optional for SPAN: the date is read from inside the file. If you enter one, it must match."
+      : "Required: the trading date this file is for.";
+    upDate.required = !!t && !isSpan;
+    upFile.disabled = !t;
+    upFile.accept = t ? meta.file_types[t].ext.split(" ").join(",") : "";
+    $("#upFileHint").textContent = t ? `Accepted: ${meta.file_types[t].ext} · up to ${meta.max_upload_mb} MB` : "";
+    upBtn.disabled = !(seg && t && upFile.files.length);
+  }
+  upSeg.addEventListener("change", () => { upType.value = ""; refreshUploadForm(); });
+  upType.addEventListener("change", refreshUploadForm);
+  upFile.addEventListener("change", refreshUploadForm);
+
+  $("#uploadForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const res = $("#upResult"); res.textContent = "";
+    const fd = new FormData();
+    fd.append("file", upFile.files[0], upFile.files[0].name);
+    fd.append("segment", upSeg.value);
+    fd.append("file_type", upType.value);
+    fd.append("trade_date", (upDate.value || "").replaceAll("-", ""));
+    if (upType.value === "span") fd.append("cycle", upCycle.value);
+    if ($("#upReplace").checked) fd.append("replace", "1");
+    upBtn.disabled = true; upBtn.textContent = "Uploading…";
+    try {
+      const { upload: u } = await api("/api/admin/uploads", { method: "POST", body: fd });
+      res.append(el("div", { class: "result ok" },
+        el("b", {}, `✓ Upload #${u.id} archived`), el("br"),
+        `${meta.segments[u.segment].name} · ${meta.file_types[u.file_type].label} · trading date ${fmtDate(u.trade_date)} (from ${u.trade_date_source})`,
+        u.cycle ? ` · cycle ${u.cycle} (from ${u.cycle_source})` : "", el("br"),
+        `${(u.size_bytes / 1024).toFixed(0)} KB · checksum ${u.sha256.slice(0, 16)}… verified`));
+      upFile.value = ""; $("#upReplace").checked = false;
+    } catch (e) {
+      res.append(el("div", { class: "result bad" }, el("b", {}, "Not uploaded: "), e.message));
+    }
+    upBtn.textContent = "Upload";
+    refreshUploadForm();
   });
 
   // ------------------------------------------------------------ upload log
@@ -257,7 +258,7 @@
               try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { active: !u.active } }); loadUsers(); } catch (e) { alert(e.message); }
             } }, u.active ? "Disable" : "Enable"), " ",
             el("button", { class: "secondary small", onclick: async () => {
-              const pw = prompt(`New temporary password for ${u.username} (12+ chars, 3 of: lower/upper/digit/symbol)`);
+              const pw = prompt(`New temporary password for ${u.username} (at least 8 characters; they must change it at next login)`);
               if (!pw) return;
               try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { password: pw } }); alert("Password reset. Their old sessions are signed out."); } catch (e) { alert(e.message); }
             } }, "Reset password"),

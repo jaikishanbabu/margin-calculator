@@ -47,9 +47,15 @@ def test_admin_cannot_manage_users_or_run_backups(client):
     assert client.get("/api/admin/uploads", headers=ad).status_code == 200
 
 
+def test_eight_character_password_accepted(client):
+    sa = login(client)
+    r = client.post("/api/admin/users", json={"username": "carol", "password": "abcd1234"}, headers=sa)
+    assert r.status_code == 201
+
+
 def test_password_rules(client):
     sa = login(client)
-    for bad in ["short1A!", "alllowercase-but-long", "bob-Contains-Name-1"]:
+    for bad in ["short1A", "", "bob-Contains-Name-1", "x" * 129]:
         r = client.post("/api/admin/users", json={"username": "bob", "password": bad}, headers=sa)
         assert r.status_code == 400
 

@@ -1,5 +1,21 @@
-body { margin:0; font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f6f7f9; color:#17202a; }
-.card { max-width:560px; margin:24px auto; background:#fff; border:1px solid #e3e7ec; border-radius:10px; padding:20px; }
-h1 { font-size:20px; margin:0 0 10px; }
-.hint { color:#5d6b7a; font-size:13px; }
-li { margin:4px 0; } .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:#fff8c5; color:#9a6700; margin-left:6px; }
+:root{--primary:#3863ff;--primary-10:rgba(56,99,255,.10);--ink:#0e0f0c;--text:#080e1c;--muted:#5e6470;--faint:#8a909c;
+  --border:#d5dbea;--line:#e8ebf3;--bg:#fff;--panel:#f3f4f7;--warn:#a35b00;--warn-bg:#fff3e0;--good:#0f8a4f;--good-bg:#e9f8f0;
+  --font-head:"Space Grotesk","Inter",system-ui,sans-serif;--font-body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme: dark){:root{--ink:#f2f4f8;--text:#e6e9f0;--muted:#a2a9b6;--faint:#7d8594;--border:#2e3546;--line:#252b39;
+  --bg:#0d1017;--panel:#151a24;--warn:#ffb35c;--warn-bg:rgba(255,170,60,.14);--good:#4ad391;--good-bg:rgba(74,211,145,.10)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1100px;margin:0 auto;padding:48px 16px 80px}
+.eyebrow{font-size:12px;font-weight:600;letter-spacing:.08em;color:var(--primary);text-transform:uppercase}
+h1{font-family:var(--font-head);font-size:40px;line-height:44px;letter-spacing:-.8px;font-weight:700;color:var(--ink);margin:10px 0 14px}
+h2{font-family:var(--font-head);font-size:17px;font-weight:600;color:var(--ink);margin:0 0 10px}
+.lead{font-size:16px;line-height:1.55;color:var(--muted);max-width:620px;margin:0 0 28px}
+.card{border:1px solid var(--line);border-radius:16px;padding:28px 30px;max-width:620px;box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px rgba(16,24,40,.04)}
+.muted{color:var(--muted);font-size:14px}
+ul{list-style:none;padding:0;margin:16px 0}
+li{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+li:last-child{border-bottom:0}
+.tag{font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn)}
+.tag.ok{background:var(--good-bg);color:var(--good)}
+.fine{font-size:12px;color:var(--faint);line-height:1.45;margin:0}
+@media (max-width:560px){h1{font-size:32px;line-height:36px}.card{padding:22px 18px}}

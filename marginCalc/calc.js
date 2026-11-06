@@ -8,7 +8,7 @@
     for (const seg of s.segments) {
       const li = document.createElement("li");
       li.textContent = `${seg.code} – ${seg.name}`;
-      const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = seg.validated ? "validated" : "not validated";
+      const tag = document.createElement("span"); tag.className = seg.validated ? "tag ok" : "tag"; tag.textContent = seg.validated ? "validated" : "not validated";
       li.append(tag); list.append(li);
     }
   } catch (e) { status.textContent = "Service is starting up or unavailable. Try again in a minute."; }

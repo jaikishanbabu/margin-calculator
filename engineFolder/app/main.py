@@ -156,8 +156,9 @@ async def users_update(request, user):
 # ---------------------------------------------------------------- uploads (admin + superadmin)
 @endpoint("admin", "superadmin")
 async def meta(request, user):
+    hints = {f"{seg}:{ft}": h for (seg, ft), h in segments.FILE_HINTS.items()}
     return ok({"segments": segments.SEGMENTS, "file_types": segments.FILE_TYPES, "segment_files": segments.SEGMENT_FILES,
-               "max_upload_mb": config.MAX_UPLOAD_MB})
+               "file_hints": hints, "max_upload_mb": config.MAX_UPLOAD_MB, "min_password_length": auth.MIN_PASSWORD_LENGTH})
 
 
 @endpoint("admin", "superadmin")
@@ -316,7 +317,8 @@ class SecurityHeaders:
                     (b"x-frame-options", b"DENY"),
                     (b"referrer-policy", b"no-referrer"),
                     (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
-                    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
+                                                 b"font-src https://fonts.gstatic.com; img-src 'self' data:; "
                                                  b"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"),
                     (b"cache-control", b"no-store"),
                 ):

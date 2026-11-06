@@ -5,20 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Margin Engine · Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="admin.css">
 <script src="config.js"></script>
 <script src="admin.js" defer></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand">Margin Engine <span class="env" id="envBadge"></span></div>
+  <div class="brand">Laabh · Margin Engine <span class="env" id="envBadge"></span></div>
   <div class="who" id="who"></div>
 </header>
 
 <main>
   <!-- login -->
   <section id="loginView" class="card narrow hidden">
-    <h1>Admin login</h1>
+    <div class="eyebrow">Admin</div>
+    <h1>Log in</h1>
     <form id="loginForm" autocomplete="on">
       <label>Username<input name="username" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
@@ -40,12 +43,44 @@
 
     <div class="tab" id="tab-upload">
       <div class="card">
-        <h2>Upload exchange files</h2>
-        <p class="hint">Pick one or more files. Suggestions come from the file name — check every row.
-          SPAN date and timestamp are read from inside the file; if the file doesn't state its cycle you must enter it.</p>
-        <input type="file" id="filePick" multiple>
-        <div id="queue"></div>
-        <button id="uploadAll" class="hidden">Upload all</button>
+        <div class="eyebrow">Exchange data</div>
+        <h1>Upload a file</h1>
+        <p class="lead">Choose the segment, then the file, then attach it. Every file is checked, archived unchanged and logged with your name and time.</p>
+        <form id="uploadForm" autocomplete="off">
+          <div class="grid2">
+            <label><span class="lbl">1 · Segment</span>
+              <select id="upSegment" required><option value="">Choose segment…</option></select>
+            </label>
+            <label><span class="lbl">2 · File <span class="tag req hidden" id="upReqTag">Required</span><span class="tag opt hidden" id="upOptTag">Optional</span></span>
+              <select id="upType" required disabled><option value="">Choose segment first</option></select>
+              <div class="hint" id="upTypeHint"></div>
+            </label>
+          </div>
+          <div class="files hidden" id="segFiles"></div>
+          <div class="grid2">
+            <label id="upDateWrap"><span class="lbl">Trading date</span>
+              <input type="date" id="upDate">
+              <div class="hint" id="upDateHint">The trading date this file is for.</div>
+            </label>
+            <label id="upCycleWrap" class="hidden"><span class="lbl">SPAN cycle</span>
+              <select id="upCycle">
+                <option value="">Choose cycle…</option>
+                <option value="i1">i1 · intraday 1</option><option value="i2">i2 · intraday 2</option>
+                <option value="i3">i3 · intraday 3</option><option value="i4">i4 · intraday 4</option>
+                <option value="i5">i5 · intraday 5</option><option value="s">s · end of day (settlement)</option>
+                <option value="bod">bod · beginning of day</option><option value="eod">eod · end of day</option>
+              </select>
+              <div class="hint">As published by the exchange (e.g. the <b>i1</b> in nsccl.20261106.<b>i1</b>.zip). Used only if the file doesn't state its own cycle.</div>
+            </label>
+          </div>
+          <label><span class="lbl">3 · Attach file</span>
+            <input type="file" id="upFile" required disabled>
+            <div class="hint" id="upFileHint"></div>
+          </label>
+          <label class="check"><input type="checkbox" id="upReplace"> Replace the existing file for the same date/cycle</label>
+          <button type="submit" id="upBtn" disabled>Upload</button>
+          <div id="upResult"></div>
+        </form>
       </div>
     </div>
 
@@ -87,12 +122,12 @@
         <form id="newUser" class="grid2">
           <label>Username<input name="username" required autocapitalize="none" spellcheck="false" pattern="[a-z0-9._-]{3,40}"></label>
           <label>Full name<input name="full_name"></label>
-          <label>Temporary password<input name="password" type="password" autocomplete="new-password" required minlength="12"></label>
+          <label>Temporary password<input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
           <label>Role<select name="role"><option value="admin">Admin</option><option value="superadmin">SuperAdmin</option></select></label>
           <button type="submit">Create</button>
           <p class="msg" id="userMsg"></p>
         </form>
-        <p class="hint">Passwords: 12+ characters with at least 3 of lowercase, uppercase, digit, symbol.</p>
+        <p class="hint">Passwords: at least 8 characters. New admins must change it at their first login.</p>
       </div>
       <div class="card">
         <h2>Admins</h2>
@@ -106,7 +141,8 @@
         <h2>Change my password</h2>
         <form id="pwForm">
           <label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label>
-          <label>New password<input name="new_password" type="password" autocomplete="new-password" required minlength="12"></label>
+          <label>New password<input name="new_password" type="password" autocomplete="new-password" required minlength="8"></label>
+          <p class="hint">At least 8 characters, different from the current one.</p>
           <button type="submit">Change password</button>
           <p class="msg" id="pwMsg"></p>
         </form>

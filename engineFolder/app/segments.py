@@ -34,6 +34,37 @@ SEGMENT_FILES = {
     "BSECM": {"required": ["var", "bhavcopy"], "optional": ["security_master", "surveillance"]},
 }
 
+# What each file looks like, per segment (shown in the admin upload form).
+FILE_HINTS = {
+    ("NFO", "span"): "nsccl.YYYYMMDD.i1.zip … i5, s (end of day) — NSE Clearing",
+    ("NFO", "contract_master"): "NSE_FO_contract_DDMMYYYY.csv.gz",
+    ("NFO", "lot_sizes"): "fo_mktlots.csv",
+    ("NFO", "elm"): "ael_DDMMYYYY.csv",
+    ("NFO", "bhavcopy"): "BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip",
+    ("NFO", "settlement"): "FOSett_prce_DDMMYYYY.csv",
+    ("NFO", "ban_list"): "fo_secban_DDMMYYYY.csv",
+    ("CDS", "span"): "nsccl_x.YYYYMMDD.i1.zip … s — NSE Clearing currency",
+    ("CDS", "contract_master"): "NSE_CD_contract_DDMMYYYY.csv.gz",
+    ("CDS", "elm"): "Currency exposure (ELM) file",
+    ("CDS", "bhavcopy"): "BhavCopy_NSE_CD_…_YYYYMMDD….csv.zip",
+    ("BFO", "span"): "BSE/ICCL risk parameter file — XML or .spn (BOD / intraday / EOD)",
+    ("BFO", "contract_master"): "BSE derivatives contract master (CSV)",
+    ("BFO", "elm"): "BSE derivatives exposure (ELM) file",
+    ("BFO", "bhavcopy"): "BhavCopy_BSE_FO_0_0_0_YYYYMMDD_F_0000.CSV",
+    ("MCX", "span"): "MCXCCL SPAN risk parameter file (.spn / XML, zip)",
+    ("MCX", "contract_master"): "MCX contract master — lot size, price unit, multiplier",
+    ("MCX", "elm"): "MCX exposure + additional / tender / delivery margins",
+    ("MCX", "bhavcopy"): "MCX bhavcopy / settlement prices",
+    ("NSECM", "var"): "C_VAR1_DDMMYYYY_N.DAT (N = batch 1–6)",
+    ("NSECM", "bhavcopy"): "BhavCopy_NSE_CM_0_0_0_YYYYMMDD_F_0000.csv.zip",
+    ("NSECM", "security_master"): "EQUITY_L.csv",
+    ("NSECM", "surveillance"): "ASM / GSM / trade-to-trade lists (CSV or JSON)",
+    ("BSECM", "var"): "BSE VaR margin file",
+    ("BSECM", "bhavcopy"): "BhavCopy_BSE_CM_0_0_0_YYYYMMDD_F_0000.CSV",
+    ("BSECM", "security_master"): "BSE scrip master",
+    ("BSECM", "surveillance"): "ASM / GSM / trade-to-trade lists (CSV or JSON)",
+}
+
 # SPAN cycles, earliest first. "bod" basis uses the earliest cycle of the day.
 CYCLE_ORDER = ["bod", "i1", "i2", "i3", "i4", "i5", "i6", "s", "eod"]
 
