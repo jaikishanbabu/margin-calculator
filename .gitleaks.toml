@@ -11,4 +11,10 @@ regexes = [
   '''Test-Super-Pass-123!''',
   '''test-service-key''',
   '''Smoke-Test-Pass-1!''',
+  '''Temp-Pass-2026-ok''',
+  '''A-Brand-New-Pass-2026''',
+  '''Upload-Desk-2026!''',
+  '''New-Desk-Pass-9!''',
+  '''Bob-Pass-2026!x''',
+  '''Rotated-''',
 ]

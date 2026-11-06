@@ -28,7 +28,7 @@ and copy them dashboard-to-dashboard. Share only the public staging URL.
    - the password placeholder → your new `margin_app` password (if it contains anything other than
      letters and digits, URL-encode it, e.g. `@` → `%40`, `%` → `%25`, `/` → `%2F`)
    Then add `?sslmode=require` at the end. Shape:
-   `postgresql://margin_app.nlubvmkdvrjgsvvxfvxm:<password>@<host exactly as copied>:5432/postgres?sslmode=require`
+   `postgresql://margin_app.nlubvmkdvrjgsvvxfvxm:<your password>@<host exactly as copied>:5432/postgres?sslmode=require`
    This is `DATABASE_URL`. (Use the *session* pooler: Render's free tier has no IPv6 for the direct host.)
 2. **Storage key** — Project Settings → **API Keys** → *Secret keys* → create one named `render-staging`
    → copy (`sb_secret_…`). This is `SUPABASE_SERVICE_KEY`. **Backend only — it goes into Render and
