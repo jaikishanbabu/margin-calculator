@@ -1,4 +1,4 @@
-/* Admin UI - styled to match laabh.dev calculators (Space Grotesk headings, Inter body,
+/* Admin UI - calculator house style (Space Grotesk headings, Inter body,
    primary #3863ff, borders #d5dbea, pill inputs, 16px cards). */
 :root{
   --primary:#3863ff; --primary-10:rgba(56,99,255,.10); --primary-18:rgba(56,99,255,.18);
