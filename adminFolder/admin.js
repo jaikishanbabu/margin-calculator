@@ -41,7 +41,8 @@
   // ------------------------------------------------------------ session
   function logout() {
     token = ""; me = null; sessionStorage.removeItem("mc_token");
-    $("#appView").classList.add("hidden"); $("#loginView").classList.remove("hidden"); $("#who").textContent = "";
+    $("#appView").classList.add("hidden"); $("#loginView").classList.remove("hidden");
+    $("#profile").classList.add("hidden"); document.body.classList.remove("nav-on"); closeMenu(); closeDrawer();
   }
 
   async function start() {
@@ -55,15 +56,19 @@
       if (!me.must_change_password) meta = await api("/api/admin/meta");
     } catch (e) { return logout(); }
     $("#loginView").classList.add("hidden"); $("#appView").classList.remove("hidden");
-    $("#who").textContent = me.username === me.role ? me.username : `${me.username} · ${me.role}`;
+    $("#avatarBtn").textContent = (me.username || "?").charAt(0).toUpperCase();
+    $("#avatarBtn").setAttribute("aria-label", `Account menu for ${me.username}`);
+    $("#menuName").textContent = me.username;
+    $("#menuRole").textContent = (me.role === "superadmin" ? "Super admin" : "Admin") + (me.full_name && me.full_name.toLowerCase().replace(/\s/g, "") !== me.username ? " · " + me.full_name : "");
+    $("#profile").classList.remove("hidden");
     document.querySelectorAll(".super-only").forEach(n => n.classList.toggle("hidden", me.role !== "superadmin"));
     if (me.must_change_password) {
-      document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("hidden", b.dataset.tab !== "account"));
+      $("#nav").classList.add("hidden"); document.body.classList.remove("nav-on");
       showTab("account");
       setMsg($("#pwMsg"), "You are using a temporary password. Set your own password to continue.", false);
       return;
     }
-    document.querySelectorAll("#tabs button").forEach(b => { if (!b.classList.contains("super-only") || me.role === "superadmin") b.classList.remove("hidden"); });
+    $("#nav").classList.remove("hidden"); document.body.classList.add("nav-on");
     const segSel = $("#logSegment");
     if (segSel.options.length === 1 && meta) for (const [k, v] of Object.entries(meta.segments)) segSel.append(el("option", { value: k }, `${k} - ${v.name}`));
     fillSegments(); refreshUploadForm();
@@ -79,15 +84,37 @@
       token = r.token; sessionStorage.setItem("mc_token", token); ev.target.reset(); start();
     } catch (e) { setMsg($("#loginMsg"), e.message); }
   });
-  $("#logout").addEventListener("click", logout);
+  // ------------------------------------------------------------ profile menu (avatar)
+  const avatarBtn = $("#avatarBtn"), pmenu = $("#profileMenu");
+  function closeMenu() { pmenu.classList.add("hidden"); avatarBtn.setAttribute("aria-expanded", "false"); }
+  avatarBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const open = pmenu.classList.contains("hidden");
+    pmenu.classList.toggle("hidden", !open); avatarBtn.setAttribute("aria-expanded", String(open));
+  });
+  pmenu.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.id === "menuLogout") logout(); else if (b.dataset.tab) showTab(b.dataset.tab);
+    closeMenu();
+  });
+  document.addEventListener("click", (ev) => { if (!ev.target.closest("#profile")) closeMenu(); });
+
+  // ------------------------------------------------------------ navigation drawer (phones)
+  const nav = $("#nav"), scrim = $("#scrim"), menuBtn = $("#menuBtn");
+  function openDrawer() { nav.classList.add("open"); scrim.classList.remove("hidden"); menuBtn.setAttribute("aria-expanded", "true"); }
+  function closeDrawer() { nav.classList.remove("open"); scrim.classList.add("hidden"); menuBtn.setAttribute("aria-expanded", "false"); }
+  menuBtn.addEventListener("click", () => nav.classList.contains("open") ? closeDrawer() : openDrawer());
+  scrim.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeMenu(); closeDrawer(); } });
 
   // ------------------------------------------------------------ tabs
   function showTab(name) {
-    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    closeDrawer(); window.scrollTo(0, 0);
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hidden", t.id !== "tab-" + name));
     ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers }[name] || (() => {}))();
   }
-  $("#tabs").addEventListener("click", (ev) => { if (ev.target.dataset.tab) showTab(ev.target.dataset.tab); });
+  $("#nav").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
   // ------------------------------------------------------------ upload form: segment -> file -> attach
   const upSeg = $("#upSegment"), upType = $("#upType"), upFile = $("#upFile"), upDate = $("#upDate"),

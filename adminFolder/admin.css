@@ -121,3 +121,70 @@ td.detail{max-width:360px;word-break:break-word;font-family:ui-monospace,Menlo,m
   .who{font-size:12px;max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
 @media (max-width:380px){ .brand span:nth-child(2){white-space:normal} }
+
+/* ===== layout: sidebar navigation + content ===== */
+main{max-width:1200px}
+.top{max-width:1200px}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;align-items:start}
+.sidebar{position:sticky;top:20px;display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--line);border-radius:16px;background:var(--bg)}
+.sidebar button{display:flex;align-items:center;gap:12px;width:100%;height:42px;padding:0 14px;border:0;border-radius:10px;background:transparent;
+  color:var(--muted);font:500 14px var(--font-body);text-align:left;cursor:pointer}
+.sidebar button svg{width:19px;height:19px;flex:none}
+.sidebar button:hover{background:var(--panel);color:var(--ink)}
+.sidebar button.active{background:var(--primary-10);color:var(--primary);font-weight:600}
+.content{min-width:0}
+.scrim{position:fixed;inset:0;background:rgba(8,14,28,.45);z-index:40}
+
+/* header buttons */
+.icon-btn{width:40px;height:40px;padding:0;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--ink);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+.icon-btn svg{width:20px;height:20px}
+.top{gap:12px}
+.top .brand{flex:1;min-width:0}
+
+/* profile avatar + menu */
+.profile{position:relative}
+.avatar{width:40px;height:40px;padding:0;border-radius:50%;border:0;background:var(--primary);color:#fff;
+  font:700 16px var(--font-head);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 0 0 2px var(--bg),0 0 0 3px var(--primary-18)}
+.avatar:focus-visible{outline:0;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--primary)}
+.menu{position:absolute;right:0;top:48px;min-width:220px;padding:6px;border:1px solid var(--line);border-radius:14px;background:var(--bg);
+  box-shadow:0 12px 32px rgba(16,24,40,.16);z-index:60}
+.menu-head{padding:10px 12px 10px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.menu-name{font:600 14px var(--font-head);color:var(--ink)}
+.menu-role{font-size:12px;color:var(--faint);text-transform:capitalize;margin-top:2px}
+.menu button{display:block;width:100%;height:38px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--ink);
+  font:500 14px var(--font-body);text-align:left;cursor:pointer}
+.menu button:hover{background:var(--panel)}
+.menu button.danger{color:var(--bad)}
+
+/* phones / small tablets: sidebar becomes a slide-in drawer opened by the hamburger */
+@media (max-width:860px){
+  body.nav-on .menu-btn{display:inline-flex}
+  .layout{display:block}
+  .sidebar{position:fixed;top:0;left:0;bottom:0;width:260px;border-radius:0 16px 16px 0;padding:72px 10px 16px;z-index:50;
+    transform:translateX(-105%);transition:transform .22s ease;box-shadow:0 0 40px rgba(8,14,28,.25)}
+  .sidebar.open{transform:none}
+  .sidebar button{height:46px;font-size:15px}
+}
+.menu-btn{display:none}
+@media (max-width:520px){
+  .icon-btn,.avatar{width:36px;height:36px}
+  .avatar{font-size:15px}
+  .menu{top:44px}
+}
+
+/* brand text: name + environment badge */
+.brand-text{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drawer-head{display:none}
+@media (max-width:860px){
+  .sidebar{padding:16px 10px}
+  .drawer-head{display:flex;align-items:center;gap:10px;padding:6px 8px 16px;margin-bottom:6px;border-bottom:1px solid var(--line);
+    font:700 16px var(--font-head);color:var(--ink)}
+}
+@media (max-width:520px){
+  .brand-text{flex-direction:column;align-items:flex-start;gap:3px}
+  .brand-name{font-size:14.5px;line-height:1.15}
+  .env{font-size:9px;padding:1px 6px;letter-spacing:.08em}
+}
