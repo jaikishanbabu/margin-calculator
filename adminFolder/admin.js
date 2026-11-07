@@ -165,7 +165,8 @@
     document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     closeDrawer(); window.scrollTo(0, 0);
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hidden", t.id !== "tab-" + name));
-    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers }[name] || (() => {}))();
+    if (name !== "fetcher") clearTimeout(fxTimer);
+    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher }[name] || (() => {}))();
   }
   $("#nav").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
@@ -257,6 +258,134 @@
     }
     upBtn.textContent = "Upload";
     refreshUploadForm();
+  });
+
+
+  // ------------------------------------------------------------ exchange file fetcher
+  const FX_ICON = { archived: "✓", have: "↷", pending: "–", not_due: "–", queued: "·", running: "⟳", failed: "✗", blocked: "✗" };
+  const FX_WORD = { archived: "Downloaded", have: "Already have", pending: "Not published yet", not_due: "Not due yet",
+                    queued: "Waiting", running: "Downloading…", failed: "Failed", blocked: "Blocked by exchange" };
+  const SOURCE_NAMES = {
+    "nfo.span": "SPAN", "nfo.contract_master": "Contract master", "nfo.market_lots": "Market lots", "nfo.elm": "ELM / exposure",
+    "nfo.bhavcopy": "Bhavcopy", "nfo.settlement_prices": "Settlement prices", "nfo.ban_list": "F&O ban list",
+    "bfo.span_xml": "SPAN", "bfo.span_spn": "SPAN (.spn)", "bfo.elm": "ELM / exposure", "bfo.bhavcopy": "Bhavcopy",
+    "mcx.span": "SPAN", "mcx.margins": "Margins (ELM, additional)", "dhan.scrip_master": "Scrip master (Dhan)", "mcx.bhavcopy": "Bhavcopy",
+    "cds.span": "SPAN", "cds.contract_master": "Contract master", "cds.elm": "ELM", "cds.bhavcopy": "Bhavcopy",
+    "nse.var": "VaR", "nse.bhavcopy": "Bhavcopy", "nse.regulatory_indicator": "Regulatory indicator (T2T/ASM)",
+    "nse.security": "Security master", "nse.asm": "ASM list", "nse.gsm": "GSM list", "nse.security_list": "Security list (T2T)",
+    "bse.var": "VaR", "bse.bhavcopy": "Bhavcopy" };
+  function fxName(ref) {
+    const [sid, variant] = ref.split(":");
+    let n = SOURCE_NAMES[sid] || sid;
+    if (variant) {
+      const m = variant.match(/^(cycle|batch)=(.+)$/);
+      n += m ? (m[1] === "cycle" ? ` ${m[2]}` : ` batch ${m[2]}`) : "";
+    }
+    return n;
+  }
+  let fx = null, fxViewId = null, fxTimer = null;
+
+  async function loadFetcher() {
+    try { fx = await api("/api/admin/fetcher"); } catch (e) { toast("Couldn't load fetcher", "bad", e.message); return; }
+    $("#fxNotConfigured").classList.toggle("hidden", fx.configured);
+    const seg = $("#fxSeg");
+    if (seg.options.length === 1) for (const k of fx.segments) seg.append(el("option", { value: k }, `${fx.segment_names[k]} (${k})`));
+    const st = fx.settings;
+    $("#fxAuto").checked = !!st.fetch_auto_enabled; $("#fxAutoLabel").textContent = st.fetch_auto_enabled ? "On" : "Off";
+    $("#fxFreq").value = String(st.fetch_frequency_min);
+    $("#fxAuto").disabled = $("#fxFreq").disabled = !fx.can_edit;
+    $("#fxFreq").closest("label").classList.toggle("hidden", !st.fetch_auto_enabled);
+    $("#fxReadOnly").classList.toggle("hidden", fx.can_edit);
+    $("#fxWindow").textContent = `Runs on trading days, ${st.fetch_window_start}–${st.fetch_window_end} IST.`;
+    const lastAuto = fx.runs.find(r => r.trigger === "auto");
+    $("#fxNext").textContent = st.fetch_auto_enabled
+      ? (fx.next_due ? `Next run ≈ ${ist(fx.next_due)}` : "Next run: tomorrow's window") + (lastAuto ? ` · last auto run ${ist(lastAuto.created_at)} (${lastAuto.status})` : "")
+      : "";
+    $("#fxRun").disabled = !!fx.active;
+    $("#fxRun").textContent = fx.active ? `Run #${fx.active.id} in progress…` : "Manually fetch exchange files";
+    renderFxHistory();
+    const show = fxViewId || (fx.active && fx.active.id) || (fx.runs[0] && fx.runs[0].id);
+    if (show) await loadFxRun(show); else { $("#fxProgress").textContent = ""; $("#fxRunMeta").textContent = "No runs yet."; }
+  }
+
+  function renderFxHistory() {
+    const tb = $("#fxHistory tbody"); tb.textContent = "";
+    if (!fx.runs.length) { tb.append(el("tr", {}, el("td", { colspan: "7" }, "No runs yet"))); return; }
+    for (const r of fx.runs) {
+      const kind = r.status === "done" ? "ok" : (["queued", "running"].includes(r.status) ? "warn" : (r.status === "skipped" ? "" : "bad"));
+      const counts = r.summary ? Object.entries(r.summary).map(([k, v]) => `${FX_WORD[k] || k} ${v}`).join(" · ") : (r.message || "");
+      tb.append(el("tr", { class: "clickable", onclick: () => { fxViewId = r.id; loadFxRun(r.id); window.scrollTo({ top: 0, behavior: "smooth" }); } },
+        el("td", {}, r.id), el("td", {}, r.trigger), el("td", {}, (r.segments || []).join(", ")),
+        el("td", {}, ist(r.created_at)), el("td", {}, r.requested_by), el("td", {}, pill(r.status, kind)), el("td", { class: "detail" }, counts)));
+    }
+  }
+
+  async function loadFxRun(id) {
+    clearTimeout(fxTimer);
+    let r;
+    try { r = (await api(`/api/admin/fetcher/runs/${id}`)).run; } catch (e) { return; }
+    const live = ["queued", "running"].includes(r.status);
+    $("#fxRunTitle").textContent = `Run #${r.id}`;
+    $("#fxRunStatus").textContent = "";
+    $("#fxRunStatus").append(pill(live ? (r.status === "queued" ? "starting…" : "running") : r.status,
+      r.status === "done" ? "ok" : (live ? "warn" : (r.status === "skipped" ? "" : "bad"))));
+    $("#fxRunMeta").textContent = `${r.trigger === "auto" ? "Automatic" : "Manual"} · ${(r.segments || []).join(", ")} · trading date ${fmtDate(r.trade_date)} · by ${r.requested_by} · started ${ist(r.started_at || r.created_at)}` +
+      (r.finished_at ? ` · finished ${ist(r.finished_at)}` : "") + (r.message ? ` · ${r.message}` : "") +
+      (r.status === "queued" ? " · waiting for GitHub to start the job (usually under a minute)" : "");
+    const fxDetail = i => {
+      const w = FX_WORD[i.status] || i.status;
+      let d = (i.detail || "").trim();
+      if (d.toLowerCase().startsWith(w.toLowerCase())) d = d.slice(w.length).replace(/^[\s\-—:·]+/, "");
+      return d ? `${w} — ${d}` : w;
+    };
+    const box = $("#fxProgress"); box.textContent = "";
+    const bySeg = {};
+    for (const it of r.items || []) (bySeg[it.segment] = bySeg[it.segment] || []).push(it);
+    const SEG_ORDER = ["NFO", "BFO", "CDS", "MCX", "NSECM", "BSECM"];
+    const segs = Object.keys(bySeg).sort((a, b) => (SEG_ORDER.indexOf(a) + 99 * (SEG_ORDER.indexOf(a) < 0)) - (SEG_ORDER.indexOf(b) + 99 * (SEG_ORDER.indexOf(b) < 0)));
+    for (const seg of segs) {
+      const items = bySeg[seg], c = {};
+      items.forEach(i => c[i.status] = (c[i.status] || 0) + 1);
+      const name = (meta && meta.segments[seg]) ? meta.segments[seg].name : seg;
+      box.append(el("div", { class: "fx-seg" },
+        el("div", { class: "fx-seg-head" }, el("span", {}, `${name} (${seg})`),
+          el("span", { class: "counts" }, Object.entries(c).map(([k, v]) => `${FX_ICON[k] || ""} ${v} ${FX_WORD[k].toLowerCase()}`).join(" · "))),
+        ...items.map(i => el("div", { class: "fx-item" },
+          el("span", { class: "fx-icon " + i.status, title: FX_WORD[i.status] }, i.status === "running" ? el("span", { class: "spin" }, "⟳") : FX_ICON[i.status]),
+          el("span", { class: "fx-name" }, fxName(i.source_ref)),
+          el("span", { class: "fx-detail" }, fxDetail(i))))));
+    }
+    if (!(r.items || []).length && live) box.append(el("p", { class: "hint" }, "Waiting for the first file…"));
+    if (live) fxTimer = setTimeout(async () => { await loadFxRun(id); if (!document.getElementById("tab-fetcher").classList.contains("hidden")) refreshFxHeader(); }, 3000);
+    else if (fx && fx.active && fx.active.id === r.id) refreshFxHeader();
+  }
+
+  async function refreshFxHeader() {
+    try { fx = await api("/api/admin/fetcher"); } catch (_) { return; }
+    $("#fxRun").disabled = !!fx.active;
+    $("#fxRun").textContent = fx.active ? `Run #${fx.active.id} in progress…` : "Manually fetch exchange files";
+    renderFxHistory();
+  }
+
+  async function saveFx(changes, okMsg) {
+    try { await api("/api/admin/fetcher/settings", { method: "PUT", json: changes }); toast(okMsg, "ok"); }
+    catch (e) { toast("Couldn't save", "bad", e.message); }
+    loadFetcher();
+  }
+  $("#fxAuto").addEventListener("change", (ev) => {
+    const on = ev.target.checked;
+    saveFx({ fetch_auto_enabled: on, fetch_frequency_min: +$("#fxFreq").value },
+      on ? `Auto fetch on · every ${$("#fxFreq").selectedOptions[0].text.replace("Every ", "")}` : "Auto fetch off");
+  });
+  $("#fxFreq").addEventListener("change", (ev) => saveFx({ fetch_frequency_min: +ev.target.value }, `Frequency: ${ev.target.selectedOptions[0].text.toLowerCase()}`));
+  $("#fxRun").addEventListener("click", async () => {
+    const seg = $("#fxSeg").value, label = $("#fxSeg").selectedOptions[0].text;
+    $("#fxRun").disabled = true;
+    try {
+      const r = await api("/api/admin/fetcher/run", { method: "POST", json: { segment: seg } });
+      toast(`Fetch started · ${label}`, "ok", `Run #${r.run.id}. Progress appears below.`);
+      fxViewId = r.run.id; await loadFetcher();
+    } catch (e) { toast("Couldn't start the fetch", "bad", e.message); $("#fxRun").disabled = false; }
   });
 
   // ------------------------------------------------------------ upload log

@@ -56,6 +56,7 @@
     <nav class="sidebar" id="nav" aria-label="Admin sections">
       <div class="drawer-head"><img src="logo.svg" alt="" class="logo" width="28" height="28"><span>Menu</span></div>
       <button type="button" data-tab="upload" class="active"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Upload</span></button>
+      <button type="button" data-tab="fetcher"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17.3 8.5 3.75 3.75 0 0 1 17.5 16H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 11v9m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Exchange File Fetcher</span></button>
       <button type="button" data-tab="log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg><span>Upload log</span></button>
       <button type="button" data-tab="audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Audit log</span></button>
       <button type="button" data-tab="backups"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span>Backups</span></button>
@@ -112,6 +113,48 @@
           <button type="submit" id="upBtn" disabled>Upload</button>
           <div id="upResult"></div>
         </form>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-fetcher">
+      <div class="card">
+        <div class="eyebrow">Automation</div>
+        <h1>Exchange File Fetcher</h1>
+        <p class="lead">Downloads NSE, BSE and MCX files and archives them like a manual upload. The first run of the day fetches everything published; later runs fetch only new files (e.g. the next SPAN cycle).</p>
+        <div class="result bad hidden" id="fxNotConfigured">The fetcher isn't connected yet: the server is missing its GitHub dispatch token or fetcher token. Manual and automatic runs will fail until it's set.</div>
+        <div class="fx-grid">
+          <div class="fx-box">
+            <div class="row-between">
+              <h2>Auto fetch</h2>
+              <label class="switch"><input type="checkbox" id="fxAuto"><span class="slider"></span><span class="switch-label" id="fxAutoLabel">Off</span></label>
+            </div>
+            <label><span class="lbl">Frequency</span>
+              <select id="fxFreq">
+                <option value="15">Every 15 mins</option><option value="30">Every 30 mins</option>
+                <option value="60">Every 1 hour</option><option value="120">Every 2 hours</option><option value="180">Every 3 hours</option>
+              </select>
+            </label>
+            <p class="hint" id="fxWindow"></p>
+            <p class="hint" id="fxNext"></p>
+            <p class="hint hidden" id="fxReadOnly">Only the SuperAdmin can change auto fetch.</p>
+          </div>
+          <div class="fx-box">
+            <h2>Manual fetch</h2>
+            <label><span class="lbl">Segment</span><select id="fxSeg"><option value="ALL">All segments</option></select></label>
+            <button type="button" id="fxRun">Manually fetch exchange files</button>
+            <p class="hint">Fetches only what isn't archived yet for today.</p>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row-between"><h2 id="fxRunTitle">Progress</h2><span id="fxRunStatus"></span></div>
+        <p class="hint" id="fxRunMeta">No runs yet.</p>
+        <div id="fxProgress"></div>
+      </div>
+      <div class="card">
+        <h2>Recent runs</h2>
+        <div class="table-wrap"><table id="fxHistory"><thead><tr>
+          <th>#</th><th>Type</th><th>Segments</th><th>Started (IST)</th><th>By</th><th>Status</th><th>Result</th></tr></thead><tbody></tbody></table></div>
       </div>
     </div>
 

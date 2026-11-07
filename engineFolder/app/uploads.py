@@ -56,7 +56,11 @@ def suggest(filename):
             "note": "Suggested from the filename - confirm before uploading. Stored values come from the file or from what you confirm."}
 
 
-def process(user, filename, data: bytes, segment, file_type, trade_date=None, cycle=None, ip=None, replace=False):
+def process(user, filename, data: bytes, segment, file_type, trade_date=None, cycle=None, ip=None, replace=False,
+            source_ref=None, fetcher=None):
+    """fetcher: None for people; for the exchange fetcher a dict(url=..., run_id=...). Fetcher uploads record the
+    cycle the exchange published the file under (cycle_source "exchange") and their source_ref, so several files of
+    one type and date (e.g. NSE VaR batches) can coexist."""
     if segment not in segments.SEGMENTS:
         raise UploadRejected("Choose a valid segment")
     allowed_types = segments.SEGMENT_FILES[segment]["required"] + segments.SEGMENT_FILES[segment]["optional"]
@@ -78,17 +82,22 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
     # 2. provenance from inside the file
     if file_type == "span":
         try:
-            prov = provenance.resolve_span(info["primary"], admin_date, admin_cycle)
+            prov = provenance.resolve_span(info["primary"], admin_date, admin_cycle,
+                                           cycle_source="exchange" if fetcher else "admin",
+                                           check_setl_label=not fetcher)
         except provenance.ProvenanceError as e:
             audit.log(user["username"], "upload_rejected", {"filename": fname, "reason": str(e)}, ip)
             raise UploadRejected(str(e))
     else:
         if not admin_date:
             raise UploadRejected("Enter the trading date this file is effective for")
-        if admin_cycle:
+        if admin_cycle and not fetcher:
             raise UploadRejected("Cycle only applies to SPAN files")
-        prov = {"trade_date": admin_date, "trade_date_source": "admin", "cycle": None, "cycle_source": None,
+        prov = {"trade_date": admin_date, "trade_date_source": "fetcher" if fetcher else "admin",
+                "cycle": admin_cycle if fetcher else None, "cycle_source": "exchange" if (fetcher and admin_cycle) else None,
                 "source_timestamp": None, "source_meta": {}}
+    if fetcher:
+        prov["source_meta"] = dict(prov["source_meta"], fetched_from=fetcher.get("url"), fetch_run=fetcher.get("run_id"))
 
     sha = hashlib.sha256(data).hexdigest()
     with db.tx() as c:
@@ -100,8 +109,8 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
     # same slot (segment, type, date, cycle) already filled?
     with db.tx() as c:
         existing = c.execute("SELECT id FROM uploads WHERE segment = ? AND file_type = ? AND trade_date = ? "
-                             "AND COALESCE(cycle, '') = ? AND status = 'archived'",
-                             (segment, file_type, prov["trade_date"], prov["cycle"] or "")).fetchall()
+                             "AND COALESCE(cycle, '') = ? AND COALESCE(source_ref, '') = ? AND status = 'archived'",
+                             (segment, file_type, prov["trade_date"], prov["cycle"] or "", source_ref or "")).fetchall()
     if existing and not replace:
         raise UploadRejected(f"A {file_type} file for {segment} {prov['trade_date']}"
                              + (f" cycle {prov['cycle']}" if prov["cycle"] else "")
@@ -136,14 +145,14 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
         uid = c.insert(
             "INSERT INTO uploads (segment, file_type, trade_date, trade_date_source, cycle, cycle_source, source_timestamp, "
             "source_meta, filename, content_kind, size_bytes, sha256, inner_manifest, archive_backend, archive_key, "
-            "archive_verified_at, parser_versions, app_version, uploaded_by, uploaded_at, uploader_ip, status, message, archive_encoding) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'archived', ?, ?)",
+            "archive_verified_at, parser_versions, app_version, uploaded_by, uploaded_at, uploader_ip, status, message, archive_encoding, "
+            "source_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?)",
             (segment, file_type, prov["trade_date"], prov["trade_date_source"], prov["cycle"], prov["cycle_source"],
              prov["source_timestamp"], json.dumps(prov["source_meta"], sort_keys=True), fname, info["kind"], len(data), sha,
              json.dumps(info["members"]), store.name, key, verified_at, json.dumps(PARSER_VERSIONS, sort_keys=True),
              config.APP_VERSION, user["username"], uploaded_at, ip,
              "Archived and checksum-verified" + (f" (stored gzip-compressed, {len(payload) * 100 // max(len(data), 1)}% of original)" if encoding == "gzip" else ""),
-             encoding))
+             encoding, source_ref))
         for e in existing:
             c.execute("UPDATE uploads SET status = 'superseded', message = ? WHERE id = ?", (f"Superseded by #{uid}", e["id"]))
         audit.append(c, user["username"], "upload_archived",
@@ -160,7 +169,7 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
         "inner_members": info["members"], "archive_backend": store.name, "archive_key": key,
         "archive_encoding": encoding, "archived_size_bytes": len(payload),
         "archive_verified_at": verified_at, "parser_versions": PARSER_VERSIONS, "app_version": config.APP_VERSION,
-        "uploaded_by": user["username"], "uploaded_at": uploaded_at,
+        "uploaded_by": user["username"], "uploaded_at": uploaded_at, "source_ref": source_ref,
     }
     mkey = f"manifests/{segment}/{prov['trade_date']}/{uid}.json"
     try:

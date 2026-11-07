@@ -16,7 +16,8 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, segments, uploads
+from . import audit, auth, backup, config, db, fetcher, segments, uploads
+from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
 API_VERSION = "stage1"
@@ -51,7 +52,7 @@ def current_user(request):
     return auth.user_from_token(h[7:].strip())
 
 
-def endpoint(*roles, ops=False, allow_pending_password=False):
+def endpoint(*roles, ops=False, allow_pending_password=False, fetcher_job=False):
     """Wrap a handler: auth/role check + uniform error handling."""
     def deco(fn):
         async def wrapper(request: Request):
@@ -61,6 +62,11 @@ def endpoint(*roles, ops=False, allow_pending_password=False):
                     if not config.OPS_TOKEN or not hmac.compare_digest(tok, config.OPS_TOKEN):
                         return err("Forbidden", 403)
                     user = {"username": "ops-scheduler", "role": "ops"}
+                elif fetcher_job:
+                    tok = request.headers.get("x-fetcher-token", "")
+                    if not config.FETCHER_TOKEN or not hmac.compare_digest(tok, config.FETCHER_TOKEN):
+                        return err("Forbidden", 403)
+                    user = {"username": "auto-fetcher", "role": "fetcher"}
                 else:
                     user = await run_in_threadpool(current_user, request) if roles else None
                     if roles:
@@ -70,7 +76,7 @@ def endpoint(*roles, ops=False, allow_pending_password=False):
                 return await fn(request, user)
             except auth.AuthError as e:
                 return err(str(e), e.status)
-            except (ValueError, uploads.UploadRejected) as e:
+            except (ValueError, uploads.UploadRejected, fetcher.FetchError) as e:
                 return err(str(e), 400)
             except LookupError as e:
                 return err(str(e), 404)
@@ -320,6 +326,111 @@ async def ops_probe_status(request, user):
     return ok(probe.status())
 
 
+# ---------------------------------------------------------------- exchange file fetcher (admin page)
+@endpoint("admin", "superadmin")
+async def fetcher_overview(request, user):
+    def work():
+        s = fetcher.settings()
+        nd = fetcher.next_due(s)
+        return {"settings": s, "frequencies": fetcher.FREQUENCIES, "segments": SEGMENT_CHOICES,
+                "segment_names": {k: segments.SEGMENTS[k]["name"] for k in SEGMENT_CHOICES},
+                "active": fetcher.active_run(), "runs": fetcher.list_runs(15),
+                "next_due": nd.isoformat(timespec="minutes") if nd else None,
+                "configured": bool(config.GITHUB_DISPATCH_TOKEN and config.FETCHER_TOKEN),
+                "can_edit": user["role"] == "superadmin"}
+    return ok(await run_in_threadpool(work))
+
+
+@endpoint("superadmin")
+async def fetcher_settings_update(request, user):
+    b = await body_json(request)
+    return ok({"settings": await run_in_threadpool(fetcher.update_settings, user, b, client_ip(request))})
+
+
+@endpoint("admin", "superadmin")
+async def fetcher_run_manual(request, user):
+    b = await body_json(request)
+    seg = str(b.get("segment") or "ALL").upper()
+    run = await run_in_threadpool(fetcher.create_run, "manual", user["username"], [seg], None, client_ip(request))
+    return ok({"run": run}, 202)
+
+
+@endpoint("admin", "superadmin")
+async def fetcher_run_get(request, user):
+    r = await run_in_threadpool(fetcher.get_run, int(request.path_params["rid"]))
+    if not r:
+        return err("Run not found", 404)
+    return ok({"run": r})
+
+
+# ---------------------------------------------------------------- scheduler tick (Supabase pg_cron, OPS token)
+@endpoint(ops=True)
+async def ops_fetch_tick(request, user):
+    return ok(await run_in_threadpool(fetcher.tick))
+
+
+# ---------------------------------------------------------------- fetcher job (GitHub Actions, FETCHER token)
+@endpoint(fetcher_job=True)
+async def job_start(request, user):
+    b = await body_json(request)
+    return ok(await run_in_threadpool(fetcher.job_started, int(request.path_params["rid"]), b.get("github_run_id")))
+
+
+@endpoint(fetcher_job=True)
+async def job_have(request, user):
+    td = request.query_params.get("trade_date", "")
+    if not (len(td) == 8 and td.isdigit()):
+        return err("trade_date=YYYYMMDD required")
+    return ok({"have": await run_in_threadpool(fetcher.have, td)})
+
+
+@endpoint(fetcher_job=True)
+async def job_items(request, user):
+    b = await body_json(request)
+    await run_in_threadpool(fetcher.report_items, int(request.path_params["rid"]), b.get("items") or [])
+    return ok({"ok": True})
+
+
+@endpoint(fetcher_job=True)
+async def job_finish(request, user):
+    b = await body_json(request)
+    return ok({"run": await run_in_threadpool(fetcher.job_finished, int(request.path_params["rid"]),
+                                              b.get("status", "done"), b.get("message", ""))})
+
+
+@endpoint(fetcher_job=True)
+async def job_upload(request, user):
+    form = await request.form(max_files=1, max_fields=12)
+    f = form.get("file")
+    if f is None or not hasattr(f, "read"):
+        return err("No file attached")
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running":
+        return err("Run is not running", 409)
+    sid = str(form.get("source_id", ""))
+    if sid not in SOURCE_MAP:
+        return err("Unknown source")
+    segment, file_type = SOURCE_MAP[sid]
+    limit = config.MAX_UPLOAD_MB * 1024 * 1024
+    chunks, size = [], 0
+    while True:
+        chunk = await f.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > limit:
+            return err(f"File is larger than {config.MAX_UPLOAD_MB} MB", 413)
+        chunks.append(chunk)
+    actor = {"username": "auto-fetcher" if run["trigger"] == "auto" else f"fetcher ({run['requested_by']})"}
+    result = await run_in_threadpool(
+        uploads.process, actor, f.filename, b"".join(chunks), segment, file_type,
+        run["trade_date"], str(form.get("cycle", "")) or None, client_ip(request),
+        str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
+        {"url": str(form.get("url", ""))[:400], "run_id": rid})
+    return ok({"upload": result}, 201)
+
+
 # ---------------------------------------------------------------- app
 class SecurityHeaders:
     def __init__(self, app):
@@ -384,6 +495,16 @@ routes = [
     Route("/api/ops/backup", ops_backup, methods=["POST"]),
     Route("/api/ops/restore-test", ops_restore_test, methods=["POST"]),
     Route("/api/ops/probe-exchanges", ops_probe_start, methods=["POST"]),
+    Route("/api/ops/fetch-tick", ops_fetch_tick, methods=["POST"]),
+    Route("/api/admin/fetcher", fetcher_overview),
+    Route("/api/admin/fetcher/settings", fetcher_settings_update, methods=["PUT"]),
+    Route("/api/admin/fetcher/run", fetcher_run_manual, methods=["POST"]),
+    Route("/api/admin/fetcher/runs/{rid:int}", fetcher_run_get),
+    Route("/api/fetcher/runs/{rid:int}/start", job_start, methods=["POST"]),
+    Route("/api/fetcher/have", job_have),
+    Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
+    Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
+    Route("/api/fetcher/runs/{rid:int}/finish", job_finish, methods=["POST"]),
     Route("/api/ops/probe-exchanges", ops_probe_status, methods=["GET"]),
 ]
 

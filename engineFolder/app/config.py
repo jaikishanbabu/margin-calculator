@@ -49,6 +49,11 @@ SUPABASE_URL = _env("SUPABASE_URL").rstrip("/")
 SUPABASE_SERVICE_KEY = _env("SUPABASE_SERVICE_KEY")
 SUPABASE_BUCKET = _env("SUPABASE_BUCKET") or "margin-archive"
 
+FETCHER_TOKEN = _env("FETCHER_TOKEN")                    # upload-only token used by the GitHub fetcher job
+GITHUB_DISPATCH_TOKEN = _env("GITHUB_DISPATCH_TOKEN")    # fine-grained PAT: Actions read/write on this repo only
+GITHUB_REPO = _env("GITHUB_REPO") or "jaikishanbabu/margin-calculator"
+GITHUB_REF = _env("GITHUB_REF") or "develop"
+
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS").split(",") if o.strip()]
 MAX_UPLOAD_MB = int(_env("MAX_UPLOAD_MB") or 60)
 ARCHIVE_OBJECT_MAX_MB = int(_env("ARCHIVE_OBJECT_MAX_MB") or 50)   # Supabase free plan: 50 MB per object

@@ -13,7 +13,7 @@ from pathlib import Path
 from . import config
 
 MIGRATIONS_DIR = config.BASE_DIR / "migrations"
-REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role", "003_must_change_password", "004_archive_encoding"}
+REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role", "003_must_change_password", "004_archive_encoding", "005_fetcher"}
 
 _local = threading.local()
 _pg_pool = None
@@ -148,4 +148,4 @@ def set_setting(key, value):
 
 
 def table_names():
-    return ["users", "audit_log", "uploads", "backup_runs", "settings"]
+    return ["users", "audit_log", "uploads", "backup_runs", "settings", "fetch_runs", "fetch_items"]

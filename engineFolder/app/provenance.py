@@ -57,7 +57,9 @@ def span_header(xml: bytes, max_elements=5000):
     return fields
 
 
-def resolve_span(xml: bytes, admin_trade_date=None, admin_cycle=None):
+def resolve_span(xml: bytes, admin_trade_date=None, admin_cycle=None, cycle_source="admin", check_setl_label=True):
+    """cycle_source: "admin" (typed/confirmed by a person) or "exchange" (the cycle the exchange published the
+    file under: the cycle in its official download URL / listing, recorded by the fetcher)."""
     fields = span_header(xml)
     file_date = fields.get("pointInTime/date") or None
     if file_date and not re.fullmatch(r"\d{8}", file_date):
@@ -91,11 +93,11 @@ def resolve_span(xml: bytes, admin_trade_date=None, admin_cycle=None):
         if not CYCLE_RE.match(admin_cycle):
             raise ProvenanceError("Cycle may only contain letters, digits, - and _ (max 12)")
         is_setl = fields.get("pointInTime/isSetl")
-        if is_setl in ("0", "1"):
+        if check_setl_label and is_setl in ("0", "1"):
             says_eod = admin_cycle.lower() in EOD_LABELS
             if is_setl == "1" and not says_eod:
                 raise ProvenanceError(f"The file is a settlement (end-of-day) file but you entered cycle {admin_cycle!r}")
             if is_setl == "0" and says_eod:
                 raise ProvenanceError(f"The file is NOT a settlement file but you entered end-of-day cycle {admin_cycle!r}")
-        out["cycle"], out["cycle_source"] = admin_cycle, "admin"
+        out["cycle"], out["cycle_source"] = admin_cycle, cycle_source
     return out
