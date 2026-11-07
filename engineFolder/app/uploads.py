@@ -3,6 +3,7 @@
 Parsing files into calculation tables is Stage 2. In Stage 1 every accepted upload is
 archived byte-for-byte with its checksum, and its provenance is recorded immutably.
 """
+import gzip
 import hashlib
 import json
 import re
@@ -106,14 +107,23 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
                              + (f" cycle {prov['cycle']}" if prov["cycle"] else "")
                              + f" already exists (#{existing[0]['id']}). Tick 'replace' to supersede it.")
 
-    # 3. archive original (write-once) and verify by reading it back
+    # 3. archive original (write-once). Large text/XML is gzip-compressed losslessly to fit storage
+    #    limits; either way we read it back, decode it and compare with the ORIGINAL checksum.
     store = get_store()
     key = f"originals/{segment}/{prov['trade_date']}/{file_type}/{sha[:16]}_{fname}"
+    encoding, payload = "identity", data
+    if info["kind"] in ("xml", "text", "json") and len(data) > config.ARCHIVE_COMPRESS_OVER_KB * 1024:
+        encoding, payload, key = "gzip", gzip.compress(data, compresslevel=6, mtime=0), key + ".gz"
+    if len(payload) > config.ARCHIVE_OBJECT_MAX_MB * 1024 * 1024:
+        raise UploadRejected(f"File is too large to archive ({len(payload) / 1048576:.0f} MB after compression; "
+                             f"the storage limit is {config.ARCHIVE_OBJECT_MAX_MB} MB per file). "
+                             "Upload the exchange's .zip/.gz version instead.")
     try:
-        obj = store.put_verified(key, data)
+        store.put_verified(key, payload, "application/gzip" if encoding == "gzip" else "application/octet-stream")
+        if decode(store.get(key), encoding) != data:
+            raise StorageError("Archived copy does not decode to the original bytes")
     except AlreadyExists:
-        back = store.get(key)
-        if hashlib.sha256(back).hexdigest() != sha:
+        if hashlib.sha256(decode(store.get(key), encoding)).hexdigest() != sha:
             raise UploadRejected("Archive already holds a different file under this name - contact SuperAdmin")
     except StorageError as e:
         audit.log(user["username"], "upload_failed", {"filename": fname, "reason": f"archive: {e}"}, ip)
@@ -126,12 +136,14 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
         uid = c.insert(
             "INSERT INTO uploads (segment, file_type, trade_date, trade_date_source, cycle, cycle_source, source_timestamp, "
             "source_meta, filename, content_kind, size_bytes, sha256, inner_manifest, archive_backend, archive_key, "
-            "archive_verified_at, parser_versions, app_version, uploaded_by, uploaded_at, uploader_ip, status, message) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'archived', ?)",
+            "archive_verified_at, parser_versions, app_version, uploaded_by, uploaded_at, uploader_ip, status, message, archive_encoding) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'archived', ?, ?)",
             (segment, file_type, prov["trade_date"], prov["trade_date_source"], prov["cycle"], prov["cycle_source"],
              prov["source_timestamp"], json.dumps(prov["source_meta"], sort_keys=True), fname, info["kind"], len(data), sha,
              json.dumps(info["members"]), store.name, key, verified_at, json.dumps(PARSER_VERSIONS, sort_keys=True),
-             config.APP_VERSION, user["username"], uploaded_at, ip, "Archived and checksum-verified"))
+             config.APP_VERSION, user["username"], uploaded_at, ip,
+             "Archived and checksum-verified" + (f" (stored gzip-compressed, {len(payload) * 100 // max(len(data), 1)}% of original)" if encoding == "gzip" else ""),
+             encoding))
         for e in existing:
             c.execute("UPDATE uploads SET status = 'superseded', message = ? WHERE id = ?", (f"Superseded by #{uid}", e["id"]))
         audit.append(c, user["username"], "upload_archived",
@@ -146,6 +158,7 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
         "cycle": prov["cycle"], "cycle_source": prov["cycle_source"], "source_timestamp": prov["source_timestamp"],
         "source_meta": prov["source_meta"], "size_bytes": len(data), "sha256": sha, "content_kind": info["kind"],
         "inner_members": info["members"], "archive_backend": store.name, "archive_key": key,
+        "archive_encoding": encoding, "archived_size_bytes": len(payload),
         "archive_verified_at": verified_at, "parser_versions": PARSER_VERSIONS, "app_version": config.APP_VERSION,
         "uploaded_by": user["username"], "uploaded_at": uploaded_at,
     }
@@ -200,11 +213,18 @@ def mark_deleted(user, upload_id, reason, ip=None):
     return get(upload_id)
 
 
+def decode(blob, encoding):
+    """Turn an archived object back into the original uploaded bytes."""
+    if encoding == "gzip":
+        return gzip.decompress(blob)
+    return blob
+
+
 def verify_archive(upload_id):
     """Re-download an archived original and compare its checksum with the database."""
     u = get(upload_id)
     if not u:
         raise LookupError("Upload not found")
-    data = get_store().get(u["archive_key"])
+    data = decode(get_store().get(u["archive_key"]), u.get("archive_encoding") or "identity")
     actual = hashlib.sha256(data).hexdigest()
     return {"upload_id": upload_id, "ok": actual == u["sha256"], "expected": u["sha256"], "actual": actual, "size": len(data)}

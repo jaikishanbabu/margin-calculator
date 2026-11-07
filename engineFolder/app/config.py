@@ -51,6 +51,8 @@ SUPABASE_BUCKET = _env("SUPABASE_BUCKET") or "margin-archive"
 
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS").split(",") if o.strip()]
 MAX_UPLOAD_MB = int(_env("MAX_UPLOAD_MB") or 60)
+ARCHIVE_OBJECT_MAX_MB = int(_env("ARCHIVE_OBJECT_MAX_MB") or 50)   # Supabase free plan: 50 MB per object
+ARCHIVE_COMPRESS_OVER_KB = int(_env("ARCHIVE_COMPRESS_OVER_KB") or 256)  # gzip text/XML originals above this size
 SERVE_STATIC = _env("SERVE_STATIC") == "1"
 
 TOKEN_HOURS = int(_env("TOKEN_HOURS") or 8)

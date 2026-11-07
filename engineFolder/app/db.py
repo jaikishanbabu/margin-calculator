@@ -13,7 +13,7 @@ from pathlib import Path
 from . import config
 
 MIGRATIONS_DIR = config.BASE_DIR / "migrations"
-REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role", "003_must_change_password"}
+REQUIRED_PG_MIGRATIONS = {"001_init", "002_app_role", "003_must_change_password", "004_archive_encoding"}
 
 _local = threading.local()
 _pg_pool = None

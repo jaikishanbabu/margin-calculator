@@ -197,3 +197,32 @@ def test_nse_two_digit_cycle_suggestion_and_storage(client, admin):
     u = upload(client, admin, "nsccl.20261108.i01.spn", span_xml(date="20261108"), cycle="i01")
     assert u.status_code == 201, u.text
     assert u.json()["upload"]["cycle"] == "i01" and u.json()["upload"]["cycle_source"] == "admin"
+
+
+def test_large_xml_archived_gzip_but_checksum_is_original(client, admin, monkeypatch):
+    import gzip as _gz
+    monkeypatch.setattr(config, "ARCHIVE_COMPRESS_OVER_KB", 1)
+    data = span_xml(date="20261108", n_opts=400)          # ~60 KB of XML
+    r = upload(client, admin, "nsccl.20261108.i01.spn", data, cycle="i01")
+    assert r.status_code == 201, r.text
+    u = r.json()["upload"]
+    assert u["archive_encoding"] == "gzip" and u["archive_key"].endswith(".gz")
+    assert u["sha256"] == hashlib.sha256(data).hexdigest()               # checksum of the ORIGINAL
+    stored = storage.get_store().get(u["archive_key"])
+    assert len(stored) < len(data) and _gz.decompress(stored) == data   # lossless
+    assert client.post(f"/api/admin/uploads/{u['id']}/verify", headers=admin).json()["ok"] is True
+    from app import backup
+    assert backup.backup_export("t")["ok"]
+    rt = backup.restore_test("t")
+    assert rt["ok"] and any(c["check"] == f"original #{u['id']} checksum" and c["ok"] for c in rt["checks"])
+
+
+def test_too_large_even_after_compression_rejected_clearly(client, admin, monkeypatch):
+    monkeypatch.setattr(config, "ARCHIVE_OBJECT_MAX_MB", 0)
+    r = upload(client, admin, "a.zip", zip_bytes({"a.spn": span_xml()}), cycle="i1")
+    assert r.status_code == 400 and "storage limit" in r.json()["error"]
+
+
+def test_small_files_stored_as_uploaded(client, admin):
+    u = upload(client, admin, "a.zip", zip_bytes({"a.spn": span_xml()}), cycle="i1").json()["upload"]
+    assert u["archive_encoding"] == "identity" and not u["archive_key"].endswith(".gz")

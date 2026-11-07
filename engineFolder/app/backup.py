@@ -177,11 +177,13 @@ def restore_test(who="system", stamp=None):
         live_chain = audit.verify()
         check("live audit chain", live_chain["ok"], live_chain.get("reason") or f"{live_chain['checked']} rows")
         # archived originals
-        ups = [dict(r) for r in conn.execute("SELECT id, archive_key, sha256 FROM uploads WHERE status != 'failed'")]
+        ups = [dict(r) for r in conn.execute("SELECT id, archive_key, sha256, archive_encoding FROM uploads WHERE status != 'failed'")]
         sample = random.sample(ups, min(ORIGINALS_SAMPLE, len(ups)))
         for u in sample:
             try:
                 data = store.get(u["archive_key"])
+                if (u.get("archive_encoding") or "identity") == "gzip":
+                    data = gzip.decompress(data)
                 check(f"original #{u['id']} checksum", hashlib.sha256(data).hexdigest() == u["sha256"])
             except NotFound:
                 check(f"original #{u['id']} present", False, "missing from archive")
