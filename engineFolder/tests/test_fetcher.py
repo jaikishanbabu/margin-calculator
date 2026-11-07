@@ -236,6 +236,7 @@ def test_fetch_job_end_to_end_with_fake_exchange(env, tmp_path, monkeypatch):
                 time.sleep(0.2)
         # create the run in the engine's database
         monkeypatch.setattr(config, "SQLITE_PATH", sqlite)
+        monkeypatch.setattr(config, "DATABASE_URL", "")   # in PG CI mode too, use the engine's SQLite file
         run = fetcher.create_run("manual", "superadmin", ["NFO"], trade_date="20261106", dispatch_fn=lambda r: None)
         job = subprocess.run([sys.executable, "-c", f"""
 import sys; sys.argv=['x','--run-id','{run['id']}']
