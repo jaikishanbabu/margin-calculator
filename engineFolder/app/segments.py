@@ -66,7 +66,7 @@ FILE_HINTS = {
 }
 
 # SPAN cycles, earliest first. "bod" basis uses the earliest cycle of the day.
-CYCLE_ORDER = ["bod", "i1", "i2", "i3", "i4", "i5", "i6", "s", "eod"]
+CYCLE_ORDER = ["bod", "i01", "i1", "i02", "i2", "i03", "i3", "i04", "i4", "i05", "i5", "i06", "i6", "s", "eod"]
 
 # (regex on lower-case filename, segment, file_type). First match wins.
 PATTERNS = [
@@ -140,13 +140,13 @@ def date_from_filename(name: str):
 
 def cycle_from_filename(name: str):
     n = name.lower()
-    m = re.search(r"\.\d{8}\.(i\d|s)\b", n)
+    m = re.search(r"\.\d{8}\.(i\d{1,2}|s)(?=\.|_|$)", n)
     if m:
         return m.group(1)
     for tag in ("bod", "eod"):
         if tag in n:
             return tag
-    m = re.search(r"[_.-](i\d)[_.-]", n)
+    m = re.search(r"[_.-](i\d{1,2})[_.-]", n)
     if m:
         return m.group(1)
     return None

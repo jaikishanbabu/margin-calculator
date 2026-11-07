@@ -189,3 +189,11 @@ def test_suggest_is_hint_only(client, admin):
     r = client.post("/api/admin/suggest", json={"filename": "nsccl.20261104.i1.zip"}, headers=admin).json()
     assert r["segment"] == "NFO" and r["file_type"] == "span" and r["cycle_hint"] == "i1"
     assert "confirm" in r["note"]
+
+
+def test_nse_two_digit_cycle_suggestion_and_storage(client, admin):
+    r = client.post("/api/admin/suggest", json={"filename": "nsccl.20261108.i01.spn"}, headers=admin).json()
+    assert r["cycle_hint"] == "i01" and r["segment"] == "NFO" and r["file_type"] == "span"
+    u = upload(client, admin, "nsccl.20261108.i01.spn", span_xml(date="20261108"), cycle="i01")
+    assert u.status_code == 201, u.text
+    assert u.json()["upload"]["cycle"] == "i01" and u.json()["upload"]["cycle_source"] == "admin"

@@ -86,12 +86,22 @@
             <label id="upCycleWrap" class="hidden"><span class="lbl">SPAN cycle</span>
               <select id="upCycle">
                 <option value="">Choose cycle…</option>
-                <option value="i1">i1 · intraday 1</option><option value="i2">i2 · intraday 2</option>
-                <option value="i3">i3 · intraday 3</option><option value="i4">i4 · intraday 4</option>
-                <option value="i5">i5 · intraday 5</option><option value="s">s · end of day (settlement)</option>
-                <option value="bod">bod · beginning of day</option><option value="eod">eod · end of day</option>
+                <optgroup label="NSE style">
+                  <option value="i01">i01 · intraday 1</option><option value="i02">i02 · intraday 2</option>
+                  <option value="i03">i03 · intraday 3</option><option value="i04">i04 · intraday 4</option>
+                  <option value="i05">i05 · intraday 5</option><option value="i06">i06 · intraday 6</option>
+                </optgroup>
+                <optgroup label="Short style">
+                  <option value="i1">i1</option><option value="i2">i2</option><option value="i3">i3</option>
+                  <option value="i4">i4</option><option value="i5">i5</option><option value="i6">i6</option>
+                </optgroup>
+                <optgroup label="Day markers">
+                  <option value="s">s · end of day (settlement)</option>
+                  <option value="bod">bod · beginning of day</option><option value="eod">eod · end of day</option>
+                </optgroup>
               </select>
-              <div class="hint">As published by the exchange (e.g. the <b>i1</b> in nsccl.20261106.<b>i1</b>.zip). Used only if the file doesn't state its own cycle.</div>
+              <div class="hint" id="upCycleSuggest"></div>
+              <div class="hint">Exactly as published (e.g. the <b>i01</b> in nsccl.20261108.<b>i01</b>.spn). Required only when the file doesn't state its own cycle.</div>
             </label>
           </div>
           <label><span class="lbl">3 · Attach file</span>

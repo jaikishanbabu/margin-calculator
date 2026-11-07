@@ -164,7 +164,21 @@
   }
   upSeg.addEventListener("change", () => { upType.value = ""; refreshUploadForm(); });
   upType.addEventListener("change", refreshUploadForm);
-  upFile.addEventListener("change", refreshUploadForm);
+  upFile.addEventListener("change", async () => {
+    refreshUploadForm();
+    const sug = $("#upCycleSuggest"); sug.textContent = "";
+    const f = upFile.files[0];
+    if (!f || upType.value !== "span") return;
+    try {
+      const s = await api("/api/admin/suggest", { method: "POST", json: { filename: f.name } });
+      if (s.cycle_hint && [...upCycle.options].some(o => o.value === s.cycle_hint)) {
+        upCycle.value = s.cycle_hint;
+        sug.textContent = `Pre-selected "${s.cycle_hint}" from the file name — check it matches the published cycle.`;
+      } else if (s.cycle_hint) {
+        sug.textContent = `File name suggests "${s.cycle_hint}" — not in the list; contact the developer.`;
+      }
+    } catch (_) {}
+  });
 
   $("#uploadForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
