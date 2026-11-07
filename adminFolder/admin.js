@@ -26,6 +26,59 @@
   const pill = (text, kind) => el("span", { class: "pill " + (kind || "") }, text);
   const setMsg = (node, text, good) => { node.textContent = text || ""; node.className = "msg " + (text ? (good ? "ok" : "bad") : ""); };
 
+
+  // ------------------------------------------------------------ dialogs + toasts (replace browser alert/prompt)
+  let toastBox = null;
+  function toast(title, kind = "ok", detail = "") {
+    if (!toastBox) { toastBox = el("div", { class: "toasts", role: "status", "aria-live": "polite" }); document.body.append(toastBox); }
+    const icon = { ok: "✓", bad: "!", info: "i" }[kind] || "i";
+    const t = el("div", { class: "toast " + kind },
+      el("span", { class: "toast-icon", "aria-hidden": "true" }, icon),
+      el("div", { class: "toast-body" }, el("div", { class: "toast-title" }, title), detail ? el("div", { class: "toast-detail" }, detail) : null),
+      el("button", { type: "button", class: "toast-close", "aria-label": "Dismiss", onclick: () => t.remove() }, "×"));
+    toastBox.append(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 250); }, kind === "bad" ? 9000 : 4500);
+  }
+
+  function dialog({ title, message = "", input = null, confirmText = "OK", cancelText = "Cancel", danger = false }) {
+    return new Promise((resolve) => {
+      const prevFocus = document.activeElement;
+      let field = null, err = el("p", { class: "msg bad" });
+      if (input) {
+        field = input.multiline
+          ? el("textarea", { rows: "3", placeholder: input.placeholder || "", maxlength: "200" })
+          : el("input", { type: input.type || "text", placeholder: input.placeholder || "", autocomplete: input.type === "password" ? "new-password" : "off" });
+      }
+      const ok = el("button", { type: "submit", class: danger ? "danger-btn" : "" }, confirmText);
+      const cancel = el("button", { type: "button", class: "secondary" }, cancelText);
+      const form = el("form", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "dlgTitle" },
+        el("h2", { id: "dlgTitle" }, title),
+        message ? el("p", { class: "dialog-msg" }, message) : null,
+        field ? el("label", {}, input.label || "", field) : null,
+        err,
+        el("div", { class: "dialog-actions" }, cancel, ok));
+      const overlay = el("div", { class: "overlay" }, form);
+      function close(v) { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 180); document.removeEventListener("keydown", onKey); if (prevFocus) prevFocus.focus(); resolve(v); }
+      function onKey(ev) { if (ev.key === "Escape") close(null); }
+      form.addEventListener("submit", (ev) => {
+        ev.preventDefault();
+        if (field) {
+          const v = field.value.trim();
+          if (input.required !== false && !v) { err.textContent = "This is required"; field.focus(); return; }
+          if (input.minlength && v.length < input.minlength) { err.textContent = `At least ${input.minlength} characters`; field.focus(); return; }
+          return close(v);
+        }
+        close(true);
+      });
+      cancel.addEventListener("click", () => close(null));
+      overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(null); });
+      document.addEventListener("keydown", onKey);
+      document.body.append(overlay);
+      requestAnimationFrame(() => { overlay.classList.add("show"); (field || ok).focus(); });
+    });
+  }
+
   async function api(path, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (token) headers["Authorization"] = "Bearer " + token;
@@ -224,9 +277,12 @@
             catch (e) { ev.target.textContent = e.message; }
           } }, "Verify"), " ",
           el("button", { class: "secondary small", onclick: async () => {
-            const reason = prompt("Reason for withdrawing this file? (the record and archived original are kept)");
+            const reason = await dialog({ title: `Withdraw upload #${u.id}?`,
+              message: `${u.filename} will no longer be used. Its record and the archived original are kept, and this is logged.`,
+              input: { label: "Reason", placeholder: "e.g. wrong date uploaded", multiline: true }, confirmText: "Withdraw", danger: true });
             if (!reason) return;
-            try { await api(`/api/admin/uploads/${u.id}/withdraw`, { method: "POST", json: { reason } }); loadLog(); } catch (e) { alert(e.message); }
+            try { await api(`/api/admin/uploads/${u.id}/withdraw`, { method: "POST", json: { reason } }); toast(`Upload #${u.id} withdrawn`, "ok"); loadLog(); }
+            catch (e) { toast("Could not withdraw", "bad", e.message); }
           } }, "Withdraw"));
         }
         tb.append(el("tr", {},
@@ -279,8 +335,19 @@
   }
   async function runOp(btn, path) {
     btn.disabled = true; const t = btn.textContent; btn.textContent = "Working…";
-    try { const r = await api(path, { method: "POST" }); alert(r.ok ? "Done ✓" : "Failed: " + (r.error || "see table")); }
-    catch (e) { alert(e.message); }
+    try {
+      const r = await api(path, { method: "POST" });
+      if (r.checks) {
+        const failed = r.checks.filter(c => !c.ok).map(c => c.check);
+        r.ok ? toast("Restore test passed", "ok", `${r.checks.length}/${r.checks.length} checks · ${r.originals_checked} archived file(s) re-verified`)
+             : toast("Restore test FAILED", "bad", failed.length ? "Failed: " + failed.join(", ") : (r.error || "See the table below"));
+      } else if (r.row_counts) {
+        const rows = Object.values(r.row_counts).reduce((a, b) => a + b, 0);
+        toast("Backup created", "ok", `${rows} rows across ${Object.keys(r.row_counts).length} tables · checksum ${String(r.sha256).slice(0, 12)}…`);
+      } else {
+        r.ok ? toast("Done", "ok") : toast("Failed", "bad", r.error || "See the table below");
+      }
+    } catch (e) { toast("Failed", "bad", e.message); }
     btn.disabled = false; btn.textContent = t; loadBackups();
   }
   $("#runBackup").addEventListener("click", (ev) => runOp(ev.target, "/api/admin/backups/run"));
@@ -296,15 +363,21 @@
         if (u.username !== me.username && u.created_by !== "system") {
           act.append(
             el("button", { class: "secondary small", onclick: async () => {
-              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { active: !u.active } }); loadUsers(); } catch (e) { alert(e.message); }
+              if (u.active && !(await dialog({ title: `Disable ${u.username}?`, message: "They will be signed out and can't log in until you enable them again.", confirmText: "Disable", danger: true }))) return;
+              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { active: !u.active } }); toast(`${u.username} ${u.active ? "disabled" : "enabled"}`, "ok"); loadUsers(); }
+              catch (e) { toast("Could not update user", "bad", e.message); }
             } }, u.active ? "Disable" : "Enable"), " ",
             el("button", { class: "secondary small", onclick: async () => {
-              const pw = prompt(`New temporary password for ${u.username} (at least 8 characters; they must change it at next login)`);
+              const pw = await dialog({ title: `Reset password for ${u.username}`,
+                message: "Give them this temporary password privately. They must change it at their next login, and their current sessions end now.",
+                input: { label: "Temporary password", type: "password", minlength: 8, placeholder: "At least 8 characters" }, confirmText: "Reset password" });
               if (!pw) return;
-              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { password: pw } }); alert("Password reset. Their old sessions are signed out."); } catch (e) { alert(e.message); }
+              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { password: pw } }); toast("Password reset", "ok", `${u.username} must change it at next login`); }
+              catch (e) { toast("Could not reset password", "bad", e.message); }
             } }, "Reset password"),
             u.locked ? el("button", { class: "secondary small", onclick: async () => {
-              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { unlock: true } }); loadUsers(); } catch (e) { alert(e.message); }
+              try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", json: { unlock: true } }); toast(`${u.username} unlocked`, "ok"); loadUsers(); }
+              catch (e) { toast("Could not unlock", "bad", e.message); }
             } }, "Unlock") : null);
         }
         tb.append(el("tr", {}, el("td", {}, u.username, u.full_name ? el("div", { class: "src" }, u.full_name) : null), el("td", {}, u.role),
@@ -316,7 +389,7 @@
   $("#newUser").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const f = Object.fromEntries(new FormData(ev.target));
-    try { const r = await api("/api/admin/users", { method: "POST", json: f }); setMsg($("#userMsg"), `Created ${r.user.username}`, true); ev.target.reset(); loadUsers(); }
+    try { const r = await api("/api/admin/users", { method: "POST", json: f }); setMsg($("#userMsg"), ""); toast(`Admin ${r.user.username} created`, "ok", "They must change the temporary password at first login"); ev.target.reset(); loadUsers(); }
     catch (e) { setMsg($("#userMsg"), e.message); }
   });
 
@@ -324,7 +397,7 @@
   $("#pwForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const f = Object.fromEntries(new FormData(ev.target));
-    try { await api("/api/auth/password", { method: "POST", json: f }); alert("Password changed. Please log in again."); logout(); }
+    try { await api("/api/auth/password", { method: "POST", json: f }); logout(); toast("Password changed", "ok", "Log in again with your new password"); }
     catch (e) { setMsg($("#pwMsg"), e.message); }
   });
 

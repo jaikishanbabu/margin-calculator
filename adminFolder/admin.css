@@ -188,3 +188,44 @@ main{max-width:1200px}
   .brand-name{font-size:14.5px;line-height:1.15}
   .env{font-size:9px;padding:1px 6px;letter-spacing:.08em}
 }
+
+/* ===== dialogs ===== */
+.overlay{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:rgba(8,14,28,.5);opacity:0;transition:opacity .18s ease}
+.overlay.show{opacity:1}
+.dialog{width:100%;max-width:420px;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:24px 24px 20px;
+  box-shadow:0 24px 60px rgba(8,14,28,.28);transform:translateY(8px) scale(.98);transition:transform .18s ease}
+.overlay.show .dialog{transform:none}
+.dialog h2{font-size:19px;margin:0 0 8px}
+.dialog-msg{font-size:14px;line-height:1.55;color:var(--muted);margin:0 0 16px}
+.dialog label{margin-bottom:6px}
+.dialog .msg{margin:4px 0 0;min-height:1.2em}
+.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+.dialog-actions button{height:40px;padding:0 18px}
+.dialog-actions button.secondary{height:40px;border-radius:12px}
+textarea{display:block;width:100%;margin-top:8px;border:1px solid var(--border);border-radius:14px;padding:10px 14px;background:var(--bg);
+  color:var(--ink);font:500 14px var(--font-body);resize:vertical;outline:0}
+textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-10)}
+button.danger-btn{background:var(--bad);color:#fff}
+@media (prefers-color-scheme: dark){ button.danger-btn{color:#1a0b0b} }
+[data-theme="dark"] button.danger-btn{color:#1a0b0b}
+[data-theme="light"] button.danger-btn{color:#fff}
+
+/* ===== toasts ===== */
+.toasts{position:fixed;right:16px;bottom:16px;z-index:110;display:flex;flex-direction:column;gap:10px;max-width:min(380px,calc(100vw - 32px))}
+.toast{display:flex;align-items:flex-start;gap:12px;padding:14px 14px 14px 16px;border-radius:14px;background:var(--bg);border:1px solid var(--line);
+  box-shadow:0 12px 32px rgba(8,14,28,.18);opacity:0;transform:translateY(10px);transition:opacity .22s ease,transform .22s ease}
+.toast.show{opacity:1;transform:none}
+.toast-icon{flex:none;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:700 14px var(--font-head)}
+.toast.ok .toast-icon{background:var(--good-bg);color:var(--good)}
+.toast.bad .toast-icon{background:var(--bad-bg);color:var(--bad)}
+.toast.info .toast-icon{background:var(--primary-10);color:var(--primary)}
+.toast.bad{border-color:var(--bad-bg)}
+.toast-body{flex:1;min-width:0}
+.toast-title{font:600 14px var(--font-head);color:var(--ink)}
+.toast-detail{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.45;word-break:break-word}
+.toast-close{flex:none;width:26px;height:26px;padding:0;border-radius:8px;background:transparent;color:var(--faint);font-size:18px;line-height:1}
+.toast-close:hover{background:var(--panel);color:var(--ink)}
+@media (max-width:520px){ .toasts{left:12px;right:12px;bottom:12px;max-width:none} }
+[data-theme="dark"] .dialog,[data-theme="dark"] .toast,[data-theme="dark"] .menu{background:#151b28;border-color:#2a3244}
+[data-theme="dark"] .logo{box-shadow:0 0 0 1px rgba(255,255,255,.10)}
