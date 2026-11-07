@@ -56,11 +56,16 @@ Owner-level triggers (checked on local Postgres 16): UPDATE/DELETE/TRUNCATE of `
 upload provenance columns are refused even for the owner unless the trigger is explicitly disabled;
 status updates on uploads are allowed.
 
-### Still required before Stage 1 is declared complete
-- [ ] CI green on `develop` (SQLite, Postgres, secret scan)
-- [ ] Staging deployed on Render and reachable
-- [ ] On staging: real upload → **Run backup** → **Run restore test** passes (real Supabase Storage)
-- [ ] *Staging backup + restore test* workflow green; *Staging health check* workflow green
+### Staging acceptance (completed 2026-11-07)
+- [x] CI green on `develop` (SQLite, Postgres as `margin_app`, gitleaks) — every push since `052ff77`
+- [x] Staging live on Render: `https://margin-engine-staging.onrender.com` (db ok, storage ok)
+- [x] Real upload: `nsccl.20261108.i01.spn` (NSE, 51.9 MB) — trading date 2026-11-08 read from the file
+      (Diwali Muhurat session), cycle `i01` entered by admin (file has no cycle field; `setlQualifier=early`,
+      `isSetl=0`, created `202611062145`), archived gzip at 18% (9.8 MB), sha256 `fe7c450d…4057f` of the original
+- [x] Backup #4 → restore test #5 (admin UI): 16/16 checks, incl. `original #1 checksum` re-verified from the archive,
+      restored audit chain, live chain, and live log still containing the backup head
+- [x] Workflows: *Staging backup + restore test* #2 green (16/16); *Staging health check* #5 green
+- [x] Audit chain: 20 entries, links intact (owner-side check) and full hash verification inside restore test #5
 
 ## Known limits / decisions for you
 1. Holder of the Supabase **owner** password can still alter data (by disabling triggers). The hash chain
