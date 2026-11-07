@@ -1,0 +1,68 @@
+# Stage 2A: can NSE / BSE / MCX files be downloaded from (1) GitHub's servers and (2) Render?
+# Manual only. Nothing is saved anywhere; results appear in the run summary and log.
+name: Exchange download probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Trading date to probe (YYYY-MM-DD), e.g. the last trading day"
+        required: true
+        default: "2026-11-06"
+
+permissions:
+  contents: read
+
+jobs:
+  from-github:
+    name: From GitHub's servers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r engineFolder/requirements.txt
+      - name: Probe every source
+        run: cd engineFolder && python -m app.probe --date "${{ inputs.date }}" --json ../probe-github.json
+      - name: Full results (JSON)
+        run: cat probe-github.json
+
+  from-render:
+    name: From Render (staging engine)
+    runs-on: ubuntu-latest
+    if: vars.STAGING_URL != ''
+    steps:
+      - name: Wake the service
+        run: for i in 1 2 3 4 5 6; do curl -sf --max-time 90 "${{ vars.STAGING_URL }}/api/health" && break; sleep 30; done
+      - name: Start probe on Render
+        run: |
+          code=$(curl -s -o start.json -w "%{http_code}" -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" \
+            "${{ vars.STAGING_URL }}/api/ops/probe-exchanges?date=${{ inputs.date }}")
+          cat start.json; [ "$code" = "202" ] || { echo "::error::could not start probe (HTTP $code)"; exit 1; }
+      - name: Wait for result (up to 20 min)
+        run: |
+          for i in $(seq 1 80); do
+            sleep 15
+            curl -s -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "${{ vars.STAGING_URL }}/api/ops/probe-exchanges" > st.json || continue
+            python3 -c "import json,sys; s=json.load(open('st.json')); sys.exit(0 if (not s.get('running') and s.get('result')) else 1)" && break
+            echo "still running… ($((i*15)) s)"
+          done
+          cat st.json
+      - name: Summary
+        run: |
+          cat > fmt.py <<'PY'
+          import json, os
+          s = json.load(open("st.json")); r = s.get("result") or {}
+          if "error" in r or "summary" not in r:
+              print("probe did not finish:", r); raise SystemExit(1)
+          w = r["where"]
+          lines = [f"### Exchange download probe — render ({w.get('city')}, {w.get('country')}, {w.get('org')})",
+                   f"Date probed: {r['date']} · took {r['seconds']} s", "",
+                   "| Segment | Source | Result | Working attempts | Example |", "|---|---|---|---|---|"]
+          for sid, x in sorted(r["summary"].items(), key=lambda kv: (kv[1]["segment"], kv[0])):
+              ex = (x["ok_example"] if x["result"] == "OK" else x["fail_example"]) or ""
+              lines.append(f"| {x['segment']} | {sid} | {'✅' if x['result']=='OK' else '❌'} {x['result']} | {x['ok_attempts']}/{x['attempts']} | {ex.replace('|','/')} |")
+          md = "\n".join(lines); print(md)
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write(md + "\n")
+          PY
+          python3 fmt.py

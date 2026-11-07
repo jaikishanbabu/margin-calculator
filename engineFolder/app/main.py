@@ -300,6 +300,26 @@ async def ops_restore_test(request, user):
     return ok(r, 200 if r["ok"] else 500)
 
 
+@endpoint(ops=True)
+async def ops_probe_start(request, user):
+    from datetime import date as _date
+    from . import probe
+    d = request.query_params.get("date", "")
+    try:
+        day = _date.fromisoformat(d)
+    except ValueError:
+        return err("date=YYYY-MM-DD required")
+    started = probe.start_background(day)
+    await run_in_threadpool(audit.log, user["username"], "exchange_probe_started", {"date": d, "started": started})
+    return ok({"started": started, "status": probe.status()["running"]}, 202)
+
+
+@endpoint(ops=True)
+async def ops_probe_status(request, user):
+    from . import probe
+    return ok(probe.status())
+
+
 # ---------------------------------------------------------------- app
 class SecurityHeaders:
     def __init__(self, app):
@@ -363,6 +383,8 @@ routes = [
     Route("/api/admin/settings", settings_update, methods=["PUT"]),
     Route("/api/ops/backup", ops_backup, methods=["POST"]),
     Route("/api/ops/restore-test", ops_restore_test, methods=["POST"]),
+    Route("/api/ops/probe-exchanges", ops_probe_start, methods=["POST"]),
+    Route("/api/ops/probe-exchanges", ops_probe_status, methods=["GET"]),
 ]
 
 if config.SERVE_STATIC:

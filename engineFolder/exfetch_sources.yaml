@@ -1,0 +1,428 @@
+# ---------------------------------------------------------------------------
+# Exchange file catalogue for the margin calculator.
+#
+# Every entry says WHAT to fetch and HOW to find it. Three ways to find a file:
+#
+#   template     - build the URL directly from date tokens (fastest, most brittle)
+#   nse_reports  - ask NSE's own "All Reports" JSON API what today's files are
+#                  and pick the one whose name matches a regex (survives renames)
+#   html         - open a web page, collect every link, pick the one matching a
+#                  regex. `render: true` uses a headless browser for JS/ASPX pages
+#   json_list    - call the API a page uses to list its files (BSE, MCX SPAN)
+#   json_api     - call an API that returns the data itself; save as CSV/JSON
+#
+# Source flags:
+#   versions: true  file list grows during the day; keep every new version
+#   refresh: true   same file name all day; re-save whenever the content changes
+#   enabled: false  skip this source
+#   catch_up_days: N  each BOD run also retries this source for N earlier trading
+#                   days (default 1: the previous day), for files published late
+#
+# The newest file of every source is mirrored to
+#   data/<SEGMENT>/<kind>/latest/<source id>/
+#
+# A source can list several `try:` strategies; they are attempted in order and
+# the first one that yields a real file wins. So a template can be the fast
+# path with a listing rule as the safety net.
+#
+# Date tokens: {YYYYMMDD} {DDMMYYYY} {DDMMYY} {YYYY} {YY} {MM} {DD}
+#              {MON} (OCT) {Mon} (Oct) {DD-Mon-YYYY} {DD-MM-YYYY}
+# Loop tokens: {cycle} (from `cycles:`)  {batch} (from `batches:`)
+#
+# phase: which scheduled run picks it up -> bod | intraday | eod
+#   (a source with `cycles:` maps each cycle to its own phase)
+#
+# verify: true  = URL/regex is best-known but not yet confirmed against the
+#                 live site. Run `python -m exfetch probe` once and fix these.
+# ---------------------------------------------------------------------------
+
+defaults:
+  timeout: 60
+  retries: 3
+  min_interval_sec: 0.6     # polite gap between requests to the same host
+  data_dir: data            # files land in data/<SEGMENT>/<kind>/<YYYY-MM-DD>/
+  extract: true             # unzip / gunzip after download, keep the original too
+  browser_headless: true    # set false to watch Chrome work (or if a site blocks headless)
+
+schedule:                   # all times IST, trading days only
+  bod:      ["07:45", "08:30"]
+  # one polling window covers NSE/BSE intraday SPAN and MCX's evening session;
+  # every run only downloads what is new, so frequent polling is cheap
+  intraday: {from: "09:00", to: "23:55", every_min: 15}
+  eod:      ["18:30", "20:15", "23:59"]
+  # before dawn, only these: BSE's start-of-day SPAN (-00) is made ~01:00-02:30 (Monday's on
+  # Saturday ~04:30); the agent's wake catch-up runs them if the Mac slept through
+  early:    {at: ["02:30", "04:00", "05:30", "07:00"], only: [bfo.span_xml]}
+
+sessions:
+  nse:
+    warmup: https://www.nseindia.com/
+    headers:
+      Referer: https://www.nseindia.com/all-reports-derivatives
+  # browser_fallback: if the site refuses the script (403 / dropped connection),
+  # the same request is made from inside headless Chrome instead. Needs:
+  #   pip install playwright && playwright install chromium
+  bse:
+    # BSE's edge (Akamai) refuses Python's TLS fingerprint (403); curl_cffi with Chrome's
+    # gets the file list and the /bsedata/ zips (checked 28 Oct 2026). No browser: its
+    # fetch() to api.bseindia.com fails CORS (no Allow-Credentials) every time.
+    impersonate: chrome
+    browser_fallback: false
+    backoff_after_block_min: 90   # after a 403/429 (or a bot page): leave the host alone 90 min
+    warmup: https://www.bseindia.com/
+    headers:
+      Referer: https://www.bseindia.com/
+      Origin: https://www.bseindia.com
+  mcxccl:
+    # Akamai refuses Python's TLS fingerprint (403); curl_cffi with Chrome's gets the SPAN
+    # list, the zips and the margins API (checked 28 Oct 2026). No headless Chrome.
+    impersonate: chrome
+    browser_fallback: false
+    backoff_after_block_min: 90   # after a 403/429 (or a bot page): leave the host alone 90 min
+    warmup: https://www.mcxccl.com/risk-management/daily-span-risk-parameter-file
+    headers:
+      Referer: https://www.mcxccl.com/
+      Origin: https://www.mcxccl.com
+  mcx:
+    impersonate: chrome       # curl_cffi with Chrome's TLS fingerprint: plain requests gets a bot page
+    retries: 2                # at most 2 data calls a run, after one warm-up
+    browser_fallback: false   # true: headless Chrome if curl_cffi still gets HTML (needs playwright)
+    warmup: https://www.mcxindia.com/market-data/bhavcopy
+    headers:
+      Referer: https://www.mcxindia.com/market-data/bhavcopy
+
+sources:
+
+# =========================== NFO - NSE F&O ==================================
+
+  - id: nfo.span
+    segment: NFO
+    kind: span
+    session: nse
+    cycles: {i1: bod, i2: intraday, i3: intraday, i4: intraday, i5: intraday, s: eod}
+    try:
+      - template: https://nsearchives.nseindia.com/archives/nsccl/span/nsccl.{YYYYMMDD}.{cycle}.zip
+      - nse_reports: {key: FO, match: 'nsccl\.{YYYYMMDD}\.{cycle}\.zip'}
+
+  - id: nfo.contract_master
+    segment: NFO
+    kind: contract_master
+    session: nse
+    phase: bod
+    try:
+      - template: https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_{DDMMYYYY}.csv.gz
+      - nse_reports: {key: FO, match: '(?i)NSE_FO_contract'}
+
+  - id: nfo.market_lots
+    segment: NFO
+    kind: contract_master
+    session: nse
+    phase: bod
+    dated: false            # always the latest file, no date in URL
+    try:
+      - template: https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv
+
+  - id: nfo.elm
+    segment: NFO
+    kind: exposure
+    session: nse
+    phase: eod
+    try:
+      - template: https://nsearchives.nseindia.com/archives/exp_lim/ael_{DDMMYYYY}.csv
+      - nse_reports: {key: FO, match: '(?i)ael_\d{8}|exposure.*limit'}
+
+  - id: nfo.bhavcopy
+    segment: NFO
+    kind: bhavcopy
+    session: nse
+    phase: eod
+    try:
+      - template: https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{YYYYMMDD}_F_0000.csv.zip
+      - nse_reports: {key: FO, match: '(?i)BhavCopy_NSE_FO'}
+
+  - id: nfo.settlement_prices
+    segment: NFO
+    kind: bhavcopy
+    session: nse
+    phase: eod
+    try:
+      - template: https://nsearchives.nseindia.com/archives/nsccl/sett/FOSett_prce_{DDMMYYYY}.csv
+      - nse_reports: {key: FO, match: '(?i)sett.*pr'}
+
+  - id: nfo.ban_list
+    segment: NFO
+    kind: ban_list
+    session: nse
+    phase: bod                # published the previous evening, named with this date
+    optional: true
+    try:
+      - template: https://nsearchives.nseindia.com/archives/fo/sec_ban/fo_secban_{DDMMYYYY}.csv
+      - template: https://nsearchives.nseindia.com/content/fo/fo_secban.csv
+      - nse_reports: {key: FO, match: 'fo_secban_{DDMMYYYY}'}
+
+# =========================== BFO - BSE F&O ==================================
+# Found live on bseindia.com (Oct 2026). The Risk Parameter page calls
+# api.bseindia.com/.../LoadData?date=YYYYMMDD&flag=0 (XML) / flag=1 (SPN),
+# which lists BOD, 4 intraday and FINAL files as they are published.
+
+  - id: bfo.span_xml
+    segment: BFO
+    kind: span
+    session: bse
+    phase: bod
+    versions: true            # keep every version; newest mirrored to latest/
+    try:
+      - json_list:
+          url: https://api.bseindia.com/BseIndiaAPI/api/LoadData/w?date={YYYYMMDD}&flag=0
+          items: Table
+          file: File_Path
+          sort: InsDttm
+          # the API lists notices.bseindia.com links, which don't resolve publicly;
+          # BSE's own page swaps them for this www path before downloading
+          rewrite: {"http://notices.bseindia.com/": "https://www.bseindia.com/bsedata/"}
+      # direct name, in case the API is down: BSERISK<date>-00..04 / -FINAL
+      - template: https://www.bseindia.com/bsedata/Risk_Automate/BSERISK{YYYYMMDD}-FINAL.ZIP
+
+  - id: bfo.span_spn          # same files in .spn format; enable if you need them
+    segment: BFO
+    kind: span
+    session: bse
+    phase: bod
+    versions: true
+    enabled: false
+    try:
+      - json_list:
+          url: https://api.bseindia.com/BseIndiaAPI/api/LoadData/w?date={YYYYMMDD}&flag=1
+          items: Table
+          file: File_Path
+          sort: InsDttm
+          rewrite: {"http://notices.bseindia.com/": "https://www.bseindia.com/bsedata/"}
+
+  - id: bfo.elm
+    segment: BFO
+    kind: exposure
+    session: bse
+    phase: bod
+    fallback_days: 3          # day's file not out: newest of the 3 trading days before, reported "from <date>"
+    notes: >-
+      ICCL per-contract ELM % (token, contract, type, ELM, additional, total), one file
+      per trading day named for the day it applies to, published ~21:15 IST the
+      trading day before.
+    try:
+      - template: https://www.bseindia.com/downloads/ICCL_EDXELM{DDMMYY}.zip
+
+  - id: bfo.contract_master
+    segment: BFO
+    kind: contract_master
+    enabled: false
+    notes: >-
+      BSE publishes no public production contract master. Lot size, expiry and
+      strike come from the BFO UDiFF bhavcopy (bfo.bhavcopy) and the multiplier
+      from the SPAN XML, so this file isn't needed.
+    try: []
+
+  - id: bfo.bhavcopy
+    segment: BFO
+    kind: bhavcopy
+    session: bse
+    phase: eod
+    try:
+      - template: https://www.bseindia.com/download/Bhavcopy/Derivative/BhavCopy_BSE_FO_0_0_0_{YYYYMMDD}_F_0000.CSV
+
+# =========================== MCX - commodities ==============================
+# Found live on mcxccl.com / mcxindia.com (Oct 2026). All three pages load
+# their data from JSON endpoints, which the agent calls directly.
+
+  - id: mcx.span
+    segment: MCX
+    kind: span
+    session: mcxccl
+    phase: bod
+    versions: true            # BOD + 8 intraday + EOD (23:45); names carry the time
+    try:
+      - json_list:
+          url: https://www.mcxccl.com/risk-management/daily-span-risk-parameter-file/GetDailySpanRiskParameter/
+          method: POST
+          body: {AsDate: "{DD/MM/YYYY}"}
+          items: data
+          file: Documents
+          base: https://www.mcxccl.com
+          sort: Documents     # mcxrpf-<date>-<HHMM>-<seq>: sorts oldest first
+
+  - id: mcx.margins
+    segment: MCX
+    kind: exposure
+    session: mcxccl
+    phase: bod
+    versions: true            # re-published ~11 times a day (fileID 1..N): keep each one
+    notes: >-
+      Per contract: initial, tender, additional long/short, special long/short,
+      ELM long/short, delivery margin, volatility. Every fileID is saved as its own
+      file (_1 = start of day, the basis client margins use).
+    try:
+      - json_api:
+          url: https://www.mcxccl.com/DailyMargin/GetDailyMargin?fromDate={DD/MM/YYYY}
+          items: Data
+          split_by: fileID
+          to_csv: true
+          save_as: mcx_daily_margin_{YYYYMMDD}_{version}.csv
+
+  - id: mcx.contract_master
+    segment: MCX
+    kind: contract_master
+    enabled: false
+    notes: >-
+      MCX has no public contract-master file. Lot size / multiplier (cvf) are in
+      the SPAN file, and the contract list with tender dates is on
+      mcxindia.com/market-data/contractavailablefortrading.
+    try: []
+
+  - id: dhan.scrip_master
+    segment: MCX
+    kind: contract_master
+    phase: bod
+    dated: false              # one file, replaced daily (~27 MB; last-modified ~02:50 IST)
+    retain_days: 7            # this source only: latest/ + its newest 7 daily copies; older ones deleted
+    notes: >-
+      Dhan's public scrip master (all exchanges): MCX lot size, multiplier and Dhan's
+      security ids (for brokercheck). Cross-checked against Angel One's contract list.
+    try:
+      - template: https://images.dhan.co/api-data/api-scrip-master.csv
+
+  - id: mcx.bhavcopy
+    segment: MCX
+    kind: bhavcopy
+    session: mcx
+    phase: eod
+    refresh: true
+    try:
+      - json_api:
+          url: https://www.mcxindia.com/market-data/bhavcopy/GetDateWiseBhavCopy?InstrumentName=ALL&fromDate={DD/MM/YYYY}
+          to_csv: true
+          sort_rows: true     # rows come back in a different order on every call
+          save_as: mcx_bhavcopy_{YYYYMMDD}.csv
+
+# =========================== CDS - NSE currency =============================
+
+  - id: cds.span
+    segment: CDS
+    kind: span
+    session: nse
+    cycles: {i1: bod, i2: intraday, i3: intraday, i4: intraday, i5: intraday, s: eod}
+    try:
+      - template: https://nsearchives.nseindia.com/archives/cd/span/nsccl_x.{YYYYMMDD}.{cycle}.zip
+      - nse_reports: {key: CD, match: 'nsccl_x\.{YYYYMMDD}\.{cycle}\.zip'}
+
+  - id: cds.contract_master
+    segment: CDS
+    kind: contract_master
+    session: nse
+    phase: bod
+    try:
+      - template: https://nsearchives.nseindia.com/content/cd/NSE_CD_contract_{DDMMYYYY}.csv.gz
+      - nse_reports: {key: CD, match: '(?i)contract'}
+
+  - id: cds.elm
+    segment: CDS
+    kind: exposure
+    session: nse
+    phase: eod
+    optional: true            # not in NSE's public daily files; rates come from circulars
+    try:
+      - nse_reports: {key: CD, match: '(?i)exposure|elm|ael_|exp_lim'}
+
+  - id: cds.bhavcopy
+    segment: CDS
+    kind: bhavcopy
+    session: nse
+    phase: eod
+    try:
+      - template: https://nsearchives.nseindia.com/archives/cd/bhav/BhavCopy_NSE_CD_0_0_0_{YYYYMMDD}_F_0000.csv.zip
+      - nse_reports: {key: CD, match: '(?i)BhavCopy_NSE_CD'}
+
+# =========================== Stocks - NSE/BSE cash ==========================
+
+  - id: nse.var
+    segment: EQ
+    kind: var
+    session: nse
+    batches: {1: bod, 2: intraday, 3: intraday, 4: intraday, 5: eod, 6: eod}
+    try:
+      - template: https://nsearchives.nseindia.com/archives/nsccl/var/C_VAR1_{DDMMYYYY}_{batch}.DAT
+      - nse_reports: {key: CM, match: '(?i)C_VAR1_\d{8}_{batch}'}
+
+  - id: bse.var
+    segment: EQ
+    kind: var
+    session: bse
+    phase: bod
+    refresh: true             # same file name, updated BOD + 4 sessions a day
+    try:
+      - template: https://www.bseindia.com/BSEDATA/margins/VAR{DDMMYY}.zip
+
+  - id: nse.bhavcopy
+    segment: EQ
+    kind: bhavcopy
+    session: nse
+    phase: eod
+    try:
+      - template: https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{YYYYMMDD}_F_0000.csv.zip
+      - nse_reports: {key: CM, match: '(?i)BhavCopy_NSE_CM'}
+
+  - id: bse.bhavcopy
+    segment: EQ
+    kind: bhavcopy
+    session: bse
+    phase: eod
+    try:
+      - template: https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_{YYYYMMDD}_F_0000.CSV
+
+  - id: nse.regulatory_indicator     # T2T / ASM / GSM stage per symbol
+    segment: EQ
+    kind: surveillance
+    session: nse
+    phase: bod
+    catch_up_days: 3          # NSE sometimes publishes it late in the evening
+    try:
+      - template: https://nsearchives.nseindia.com/content/cm/REG_IND{DDMMYY}.csv
+      - nse_reports: {key: CM, match: 'REG1?_IND{DDMMYY}'}
+
+  - id: nse.security                 # security master: token, ISIN, series, lot (SME), price band, status
+    segment: EQ
+    kind: contract_master
+    session: nse
+    phase: bod
+    catch_up_days: 3
+    try:
+      - template: https://nsearchives.nseindia.com/content/cm/NSE_CM_security_{DDMMYYYY}.csv.gz
+      # the listing has two files of this name; the interop/ one adds BSE-exclusive securities
+      - nse_reports: {key: CM, match: '(?i)Security File \(\.gz\) \(NSE Listed securities\)'}
+
+  - id: nse.asm
+    segment: EQ
+    kind: surveillance
+    session: nse
+    phase: bod
+    dated: false
+    try:
+      - json_api: https://www.nseindia.com/api/reportASM
+        save_as: nse_asm.json
+
+  - id: nse.gsm
+    segment: EQ
+    kind: surveillance
+    session: nse
+    phase: bod
+    dated: false
+    try:
+      - json_api: https://www.nseindia.com/api/reportGSM
+        save_as: nse_gsm.json
+
+  - id: nse.security_list            # series BE/BZ = trade-for-trade
+    segment: EQ
+    kind: surveillance
+    session: nse
+    phase: bod
+    dated: false
+    try:
+      - template: https://nsearchives.nseindia.com/content/equities/sec_list.csv

@@ -122,3 +122,25 @@ def test_secrets_never_printed():
         for line in p.read_text().splitlines():
             if "print(" in line:
                 assert not _re.search(r"PASSWORD\)|TOKEN\)|SECRET\)|SERVICE_KEY\)|DATABASE_URL\)", line), f"{p}: {line}"
+
+
+def test_probe_endpoint_requires_ops_token(client):
+    assert client.post("/api/ops/probe-exchanges?date=2026-11-06").status_code == 403
+    assert client.get("/api/ops/probe-exchanges").status_code == 403
+    r = client.post("/api/ops/probe-exchanges?date=bad", headers={"X-Ops-Token": config.OPS_TOKEN})
+    assert r.status_code == 400
+
+
+def test_probe_only_contacts_configured_exchange_hosts():
+    import yaml, re
+    cfg = yaml.safe_load((REPO / "engineFolder" / "exfetch_sources.yaml").read_text())
+    hosts = set()
+    for s in cfg["sources"]:
+        for st in s.get("try", []):
+            for v in st.values():
+                url = v if isinstance(v, str) else (v.get("url") if isinstance(v, dict) else None)
+                if url and url.startswith("http"):
+                    hosts.add(re.match(r"https?://([^/]+)", url).group(1))
+    allowed = {"nsearchives.nseindia.com", "www.nseindia.com", "api.bseindia.com", "www.bseindia.com",
+               "www.mcxccl.com", "www.mcxindia.com", "images.dhan.co"}
+    assert hosts <= allowed, hosts - allowed
