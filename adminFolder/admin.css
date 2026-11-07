@@ -228,4 +228,3 @@ button.danger-btn{background:var(--bad);color:#fff}
 .toast-close:hover{background:var(--panel);color:var(--ink)}
 @media (max-width:520px){ .toasts{left:12px;right:12px;bottom:12px;max-width:none} }
 [data-theme="dark"] .dialog,[data-theme="dark"] .toast,[data-theme="dark"] .menu{background:#151b28;border-color:#2a3244}
-[data-theme="dark"] .logo{box-shadow:0 0 0 1px rgba(255,255,255,.10)}

@@ -1,35 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Margin Calculator">
   <title>Margin Calculator</title>
-  <defs>
-    <linearGradient id="mcRibbon" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5b82ff"/>
-      <stop offset="1" stop-color="#3863ff"/>
-    </linearGradient>
-    <linearGradient id="mcArrow" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#14b87a"/>
-      <stop offset="1" stop-color="#4ad391"/>
-    </linearGradient>
-    <clipPath id="mcClip"><rect width="64" height="64" rx="15"/></clipPath>
-  </defs>
-  <g clip-path="url(#mcClip)">
-    <rect width="64" height="64" fill="#0e1a3a"/>
-    <!-- diagonal panel (lighter navy) behind the keypad -->
-    <path d="M64 14 V64 H14 Z" fill="#152754"/>
-    <!-- M ribbon: up the left side, down to the middle -->
-    <path d="M13 53 V22 L30 37" fill="none" stroke="url(#mcRibbon)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-    <!-- rising arrow -->
-    <path d="M30 37 L47 20" fill="none" stroke="url(#mcArrow)" stroke-width="9" stroke-linecap="round"/>
-    <path d="M40.5 11.5 H55.5 V26.5 Z" fill="#4ad391" stroke="#4ad391" stroke-width="2" stroke-linejoin="round"/>
-    <!-- calculator keypad -->
-    <g fill="#2c4482">
-      <rect x="37" y="38" width="9.5" height="9.5" rx="2.4"/><rect x="48.5" y="38" width="9.5" height="9.5" rx="2.4"/>
-      <rect x="37" y="49.5" width="9.5" height="9.5" rx="2.4"/><rect x="48.5" y="49.5" width="9.5" height="9.5" rx="2.4"/>
-    </g>
-    <g stroke="#ffffff" stroke-width="1.6" stroke-linecap="round">
-      <path d="M41.75 40.5 v4.5 M39.5 42.75 h4.5"/>
-      <path d="M51 42.75 h4.5"/>
-      <path d="M40 52 l3.5 3.5 M43.5 52 l-3.5 3.5"/>
-      <path d="M51 53 h4.5 M51 55.5 h4.5"/>
-    </g>
-  </g>
+  <rect width="64" height="64" rx="16" fill="#3863ff"/>
+  <!-- gauge track -->
+  <path d="M13 42a19 19 0 0 1 38 0" fill="none" stroke="#ffffff" stroke-opacity=".32" stroke-width="6" stroke-linecap="round"/>
+  <!-- used margin -->
+  <path d="M13 42a19 19 0 0 1 26.5-17.5" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <!-- needle -->
+  <path d="M32 42 L43.5 27" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="32" cy="42" r="5.5" fill="#ffffff"/>
+  <circle cx="32" cy="42" r="2.2" fill="#3863ff"/>
+  <!-- base line -->
+  <path d="M18 51h28" stroke="#ffffff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
 </svg>

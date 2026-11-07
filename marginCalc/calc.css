@@ -35,4 +35,3 @@ li:last-child{border-bottom:0}
 .top{display:flex;justify-content:space-between;align-items:center;max-width:1100px;margin:0 auto;padding:22px 16px 0}
 .brand{font-family:var(--font-head);font-weight:700;font-size:18px;color:var(--ink)}
 .wrap{padding-top:28px}
-[data-theme="dark"] .logo{box-shadow:0 0 0 1px rgba(255,255,255,.10)}
