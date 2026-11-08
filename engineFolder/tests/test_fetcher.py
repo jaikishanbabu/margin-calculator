@@ -274,3 +274,32 @@ j.main()
     finally:
         srv.terminate()
         srv.wait(10)
+
+
+# ---------------------------------------------------------------- evening runs fetch the next trading day
+def test_trading_date_moves_to_next_weekday_from_21_00():
+    assert fetcher.trading_date_for(at(20, 59)) == "20261106"          # Friday evening, before 21:00
+    assert fetcher.trading_date_for(at(21, 0)) == "20261109"           # Friday 21:00 -> Monday
+    assert fetcher.trading_date_for(at(21, 30, day=9)) == "20261110"   # Monday 21:30 -> Tuesday
+
+
+def test_evening_tick_creates_next_day_run(fx):
+    fetcher.update_settings({"username": "superadmin"}, {"fetch_auto_enabled": True, "fetch_frequency_min": 30})
+    out = fetcher.tick(now=at(21, 30), dispatch_fn=lambda r: None)
+    assert out["action"] == "started" and fetcher.get_run(out["run_id"])["trade_date"] == "20261109"
+
+
+def test_job_can_move_trade_date_forward_only(fx):
+    c, job = fx["client"], fx["job"]
+    run = fetcher.create_run("auto", "auto-fetcher", ["ALL"], trade_date="20261110", dispatch_fn=lambda r: None)
+    rid = run["id"]
+    url = f"/api/fetcher/runs/{rid}/trade-date"
+    assert c.post(url, json={"trade_date": "20261111"}, headers=job).status_code == 400      # not running yet
+    c.post(f"/api/fetcher/runs/{rid}/start", json={}, headers=job)
+    assert c.post(url, json={"trade_date": "20261109"}, headers=job).status_code == 400      # backwards
+    assert c.post(url, json={"trade_date": "20261130"}, headers=job).status_code == 400      # too far
+    assert c.post(url, json={"trade_date": "20261111"}, headers=fx["sa"]).status_code == 403  # job token only
+    r = c.post(url, json={"trade_date": "20261111"}, headers=job)
+    assert r.status_code == 200 and fetcher.get_run(rid)["trade_date"] == "20261111"
+    acts = [e["action"] for e in c.get("/api/admin/audit", headers=fx["sa"]).json()["entries"]]
+    assert "fetch_run_trade_date_moved" in acts

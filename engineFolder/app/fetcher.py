@@ -136,10 +136,18 @@ def expire_stale():
             audit.append(c, "system", "fetch_run_expired", {"run_id": r["id"]})
 
 
+NEXT_DAY_FROM = "21:00"     # IST: NSE publishes the next trading day's start-of-day SPAN (i1) ~21:30
+
+
 def trading_date_for(now=None):
-    """The trading date files are fetched for. From 21:00 IST NSE publishes the next day's
-    start-of-day SPAN, so evening runs also look at the next weekday (the job checks holidays)."""
+    """The trading date a run fetches for. Until 21:00 IST: today. From 21:00: the next weekday,
+    because the next day's start-of-day SPAN (and contract master) come out that evening; the
+    job moves it on past exchange holidays (it has NSE's holiday list)."""
     t = (now or now_ist())
+    if t.strftime("%H:%M") >= NEXT_DAY_FROM:
+        t = t + timedelta(days=1)
+        while t.weekday() >= 5:
+            t += timedelta(days=1)
     return t.strftime("%Y%m%d")
 
 
@@ -227,7 +235,7 @@ def tick(now=None, dispatch_fn=None):
             return dict(out, action="none", reason=f"not due ({age_min:.0f} of {s['fetch_frequency_min']} min)")
     if active_run():
         return dict(out, action="none", reason="a run is already in progress")
-    run = create_run("auto", "auto-fetcher", ["ALL"], trade_date=t.strftime("%Y%m%d"), dispatch_fn=dispatch_fn, at=t)
+    run = create_run("auto", "auto-fetcher", ["ALL"], trade_date=trading_date_for(t), dispatch_fn=dispatch_fn, at=t)
     return dict(out, action="started", run_id=run["id"])
 
 
@@ -249,6 +257,29 @@ def job_started(run_id, github_run_id=None):
             raise FetchError(f"Run is {r['status']}, not queued")
         c.execute("UPDATE fetch_runs SET status = 'running', started_at = ?, github_run_id = ? WHERE id = ?",
                   (iso(), str(github_run_id or "")[:40], run_id))
+    return job_config(run_id)
+
+
+def job_move_trade_date(run_id, new_date):
+    """The job found the run's date is an exchange holiday: move it forward to the next trading day.
+    Only forward, at most 10 days, only while running, and only before anything was uploaded."""
+    r = get_run(run_id, with_items=False)
+    if not r:
+        raise LookupError("Fetch run not found")
+    if r["status"] != "running":
+        raise FetchError(f"Run is {r['status']}")
+    new = str(new_date)
+    try:
+        old_d, new_d = datetime.strptime(r["trade_date"], "%Y%m%d"), datetime.strptime(new, "%Y%m%d")
+    except ValueError:
+        raise ValueError("trade_date must be YYYYMMDD")
+    if not 0 < (new_d - old_d).days <= 10:
+        raise ValueError("trade date can only move forward, by at most 10 days")
+    if db.query_one("SELECT id FROM fetch_items WHERE run_id = ? AND upload_id IS NOT NULL", (run_id,)):
+        raise FetchError("files were already uploaded for this run")
+    with db.tx() as c:
+        c.execute("UPDATE fetch_runs SET trade_date = ? WHERE id = ?", (new, run_id))
+        audit.append(c, "auto-fetcher", "fetch_run_trade_date_moved", {"run_id": run_id, "from": r["trade_date"], "to": new})
     return job_config(run_id)
 
 

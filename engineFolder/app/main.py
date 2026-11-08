@@ -467,6 +467,12 @@ async def job_upload(request, user):
 
 
 @endpoint(fetcher_job=True)
+async def job_trade_date(request, user):
+    b = await body_json(request)
+    return ok(await run_in_threadpool(fetcher.job_move_trade_date, int(request.path_params["rid"]), b.get("trade_date", "")))
+
+
+@endpoint(fetcher_job=True)
 async def job_build_inputs(request, user):
     return ok(await run_in_threadpool(readiness.build_inputs, request.query_params.get("segment", "").upper()))
 
@@ -587,6 +593,7 @@ routes = [
     Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
     Route("/api/fetcher/build/inputs", job_build_inputs),
+    Route("/api/fetcher/runs/{rid:int}/trade-date", job_trade_date, methods=["POST"]),
     Route("/api/fetcher/uploads/{uid:int}/original", job_original),
     Route("/api/fetcher/runs/{rid:int}/snapshot", job_snapshot, methods=["POST"]),
     Route("/api/admin/readiness", readiness_overview),

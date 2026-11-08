@@ -82,6 +82,8 @@ def span_cycle(sid, loop, name):
 def due(src_phase, trade_date, now, trigger):
     if trigger != "auto" or src_phase != "eod":
         return True
+    if trade_date > now.date():          # evening run for the next day: its end-of-day files don't exist yet
+        return False
     if trade_date < now.date():
         return True
     return now.strftime("%H:%M") >= EOD_NOT_BEFORE
@@ -110,6 +112,21 @@ def main():
                 dflt.get("min_interval_sec", 0.6), browser_headless=True)
     cal = Calendar(Path(tempfile.mkdtemp()), lambda u: http.get_json(u, "nse"))
     rebuild = trigger == "rebuild"
+    today = datetime.now(IST).date()
+    if not rebuild and d > today:            # an evening run for the next trading day: skip holidays
+        try:
+            nd = d
+            for _ in range(10):
+                if cal.is_trading_day(nd, "EQ"):
+                    break
+                nd += timedelta(days=1)
+            if nd != d:
+                r = eng.call("POST", f"/api/fetcher/runs/{rid}/trade-date", json={"trade_date": nd.strftime("%Y%m%d")})
+                if r.status_code == 200:
+                    print(f"{d} is an exchange holiday - fetching for {nd}")
+                    d, td = nd, nd.strftime("%Y%m%d")
+        except Exception as e:
+            print(f"holiday check failed ({e}); keeping {d}")
     if trigger == "auto":
         try:
             if not cal.is_trading_day(d, "EQ"):
