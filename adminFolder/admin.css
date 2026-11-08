@@ -260,3 +260,23 @@ button.danger-btn{background:var(--bad);color:#fff}
 .spin{display:inline-block;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (max-width:640px){.fx-seg-head{flex-direction:column;align-items:flex-start;gap:2px}}
+
+/* data readiness */
+.result.warn{background:var(--warn-bg);color:var(--warn)}
+.dialog-msg{white-space:pre-line}
+.rd-seg{border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-top:12px}
+.rd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.rd-name{font:600 15px var(--font-head);color:var(--ink);margin-bottom:2px}
+.rd-note{font-size:13px;margin:10px 0 0;padding:8px 12px;border-radius:10px}
+.rd-note.warn{background:var(--warn-bg);color:var(--warn)} .rd-note.bad{background:var(--bad-bg);color:var(--bad)}
+.rd-basis{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:12px}
+.rd-snaps{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.rd-snap{display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;padding:9px 12px;font-size:13px;border-top:1px solid var(--line)}
+.rd-snap:first-child{border-top:0}
+.rd-snap.chosen{background:var(--panel)}
+.rd-snap-name{font-weight:600;color:var(--ink)}
+.rd-snap-detail{color:var(--muted)}
+.bad-text{color:var(--bad);margin-top:2px}
+button.link{background:none;border:0;color:var(--primary);font-size:13px;padding:0;height:auto;cursor:pointer}
+.rd-actions{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+@media (max-width:640px){.rd-snap{grid-template-columns:1fr}.rd-head{flex-direction:column}}

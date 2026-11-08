@@ -51,7 +51,7 @@
           : el("input", { type: input.type || "text", placeholder: input.placeholder || "", autocomplete: input.type === "password" ? "new-password" : "off" });
       }
       const ok = el("button", { type: "submit", class: danger ? "danger-btn" : "" }, confirmText);
-      const cancel = el("button", { type: "button", class: "secondary" }, cancelText);
+      const cancel = cancelText === null ? null : el("button", { type: "button", class: "secondary" }, cancelText);
       const form = el("form", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "dlgTitle" },
         el("h2", { id: "dlgTitle" }, title),
         message ? el("p", { class: "dialog-msg" }, message) : null,
@@ -71,7 +71,7 @@
         }
         close(true);
       });
-      cancel.addEventListener("click", () => close(null));
+      if (cancel) cancel.addEventListener("click", () => close(null));
       overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(null); });
       document.addEventListener("keydown", onKey);
       document.body.append(overlay);
@@ -166,7 +166,8 @@
     closeDrawer(); window.scrollTo(0, 0);
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hidden", t.id !== "tab-" + name));
     if (name !== "fetcher") clearTimeout(fxTimer);
-    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher }[name] || (() => {}))();
+    if (name !== "ready") clearTimeout(rdTimer);
+    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher, ready: loadReady }[name] || (() => {}))();
   }
   $("#nav").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
@@ -262,9 +263,9 @@
 
 
   // ------------------------------------------------------------ exchange file fetcher
-  const FX_ICON = { archived: "✓", have: "↷", pending: "–", not_due: "–", queued: "·", running: "⟳", failed: "✗", blocked: "✗" };
+  const FX_ICON = { archived: "✓", built: "✓", have: "↷", pending: "–", not_due: "–", queued: "·", running: "⟳", failed: "✗", blocked: "✗" };
   const FX_WORD = { archived: "Downloaded", have: "Already have", pending: "Not published yet", not_due: "Not due yet",
-                    queued: "Waiting", running: "Downloading…", failed: "Failed", blocked: "Blocked by exchange" };
+                    queued: "Waiting", running: "Downloading…", failed: "Failed", blocked: "Blocked by exchange", built: "Built" };
   const SOURCE_NAMES = {
     "nfo.span": "SPAN", "nfo.contract_master": "Contract master", "nfo.market_lots": "Market lots", "nfo.elm": "ELM / exposure",
     "nfo.bhavcopy": "Bhavcopy", "nfo.settlement_prices": "Settlement prices", "nfo.ban_list": "F&O ban list",
@@ -274,7 +275,9 @@
     "nse.var": "VaR", "nse.bhavcopy": "Bhavcopy", "nse.regulatory_indicator": "Regulatory indicator (T2T/ASM)",
     "nse.security": "Security master", "nse.asm": "ASM list", "nse.gsm": "GSM list", "nse.security_list": "Security list (T2T)",
     "bse.var": "VaR", "bse.bhavcopy": "Bhavcopy" };
+  const BASIS_NAME = { bod: "start-of-day", latest: "latest cycle" };
   function fxName(ref) {
+    if (ref.startsWith("build:")) return `Parsed data · ${BASIS_NAME[ref.split(":")[2]] || ref.split(":")[2]}`;
     const [sid, variant] = ref.split(":");
     let n = SOURCE_NAMES[sid] || sid;
     if (variant) {
@@ -329,7 +332,7 @@
     $("#fxRunStatus").textContent = "";
     $("#fxRunStatus").append(pill(live ? (r.status === "queued" ? "starting…" : "running") : r.status,
       r.status === "done" ? "ok" : (live ? "warn" : (r.status === "skipped" ? "" : "bad"))));
-    $("#fxRunMeta").textContent = `${r.trigger === "auto" ? "Automatic" : "Manual"} · ${(r.segments || []).join(", ")} · trading date ${fmtDate(r.trade_date)} · by ${r.requested_by} · started ${ist(r.started_at || r.created_at)}` +
+    $("#fxRunMeta").textContent = `${{ auto: "Automatic", manual: "Manual", rebuild: "Rebuild (no download)" }[r.trigger] || r.trigger} · ${(r.segments || []).join(", ")} · trading date ${fmtDate(r.trade_date)} · by ${r.requested_by} · started ${ist(r.started_at || r.created_at)}` +
       (r.finished_at ? ` · finished ${ist(r.finished_at)}` : "") + (r.message ? ` · ${r.message}` : "") +
       (r.status === "queued" ? " · waiting for GitHub to start the job (usually under a minute)" : "");
     const fxDetail = i => {
@@ -351,7 +354,7 @@
         el("div", { class: "fx-seg-head" }, el("span", {}, `${name} (${seg})`),
           el("span", { class: "counts" }, Object.entries(c).map(([k, v]) => `${FX_ICON[k] || ""} ${v} ${FX_WORD[k].toLowerCase()}`).join(" · "))),
         ...items.map(i => el("div", { class: "fx-item" },
-          el("span", { class: "fx-icon " + i.status, title: FX_WORD[i.status] }, i.status === "running" ? el("span", { class: "spin" }, "⟳") : FX_ICON[i.status]),
+          el("span", { class: "fx-icon " + (i.status === "built" ? "archived" : i.status), title: FX_WORD[i.status] }, i.status === "running" ? el("span", { class: "spin" }, "⟳") : FX_ICON[i.status]),
           el("span", { class: "fx-name" }, fxName(i.source_ref)),
           el("span", { class: "fx-detail" }, fxDetail(i))))));
     }
@@ -387,6 +390,105 @@
       fxViewId = r.run.id; await loadFetcher();
     } catch (e) { toast("Couldn't start the fetch", "bad", e.message); $("#fxRun").disabled = false; }
   });
+
+  // ------------------------------------------------------------ data readiness (Stage 2C)
+  const RD_STATUS = {
+    ready: ["Ready", "ok"], stale: ["Stale", "warn"], fallback: ["Using start-of-day (fallback)", "warn"],
+    missing_inputs: ["Missing inputs", "bad"], check_failed: ["Check failed", "bad"], error: ["Build error", "bad"],
+    not_built: ["Not built yet", ""], no_parser: ["No parser yet", ""] };
+  let rd = null, rdTimer = null;
+
+  function snapLine(s) {
+    if (!s) return "—";
+    const day = s.trade_date ? fmtDate(s.trade_date) : "?";
+    const cyc = s.span_cycle ? ` · ${s.segment === "NSECM" ? "VaR batch" : "SPAN"} ${s.span_cycle}` + (s.span_day && s.span_day !== s.trade_date ? ` of ${fmtDate(s.span_day)}` : "") : "";
+    const made = s.span_created ? ` · file created ${s.span_created}` : "";
+    return `Data ${day}${cyc}${made} · built ${ist(s.built_at)}`;
+  }
+
+  async function loadReady() {
+    clearTimeout(rdTimer);
+    try { rd = await api("/api/admin/readiness"); } catch (e) { toast("Couldn't load readiness", "bad", e.message); return; }
+    const box = $("#rdList"); box.textContent = "";
+    $("#rdReadOnly").classList.toggle("hidden", rd.can_edit);
+    for (const r of rd.segments) {
+      const [word, kind] = RD_STATUS[r.status] || [r.status, ""];
+      const card = el("div", { class: "rd-seg" });
+      card.append(el("div", { class: "rd-head" },
+        el("div", {}, el("div", { class: "rd-name" }, `${rd.segment_names[r.segment] || r.segment} (${r.segment})`),
+          el("div", { class: "hint" }, r.has_parser ? (r.in_use ? snapLine(r.in_use) : (r.status === "not_built" ? r.message : "No usable data yet — see below")) : r.message)),
+        pill(word, kind)));
+      if (!r.has_parser) { box.append(card); continue; }
+      if (r.in_use && r.message) card.append(el("p", { class: "rd-note warn" }, r.message));
+
+      // basis toggle (SuperAdmin) - only for segments with both bases
+      if (r.bases.length > 1) {
+        const on = r.basis === "latest";
+        const inp = el("input", { type: "checkbox" }); inp.checked = on; inp.disabled = !rd.can_edit;
+        inp.addEventListener("change", () => setBasis(r.segment, inp.checked ? "latest" : "bod", inp));
+        card.append(el("div", { class: "rd-basis" },
+          el("label", { class: "switch" }, inp, el("span", { class: "slider" }),
+            el("span", { class: "switch-label" }, "Use latest SPAN cycle")),
+          el("span", { class: "hint" }, on ? "Margins use the newest cycle — not validated against brokers yet."
+                                             : "Margins use the start-of-day (i1) file, as brokers do.")));
+      }
+      // both snapshots
+      const tbl = el("div", { class: "rd-snaps" });
+      for (const b of r.bases) {
+        const sn = r.snapshots[b], lv = sn.live, last = sn.last;
+        const failedNewer = last && last.status === "failed" && (!lv || last.id > lv.id);
+        tbl.append(el("div", { class: "rd-snap" + (r.basis === b ? " chosen" : "") },
+          el("div", { class: "rd-snap-name" }, BASIS_NAME[b][0].toUpperCase() + BASIS_NAME[b].slice(1) + (r.basis === b ? " · in use" : "")),
+          el("div", { class: "rd-snap-detail" }, lv ? snapLine(lv) : "Not built yet",
+            failedNewer ? el("div", { class: "bad-text" }, `Last build failed: ${last.message || last.error_kind}`) : null),
+          lv ? el("button", { type: "button", class: "link", onclick: () => showSnapshot(lv.id) }, "Files used") : el("span")));
+      }
+      card.append(tbl);
+      const btn = el("button", { type: "button", class: "secondary small" }, "Rebuild");
+      btn.disabled = !!rd.active;
+      btn.addEventListener("click", () => rebuild(r.segment, btn));
+      card.append(el("div", { class: "rd-actions" }, btn,
+        el("span", { class: "hint" }, r.newest_input_date ? `Newest file archived for ${fmtDate(r.newest_input_date)}` : "No files archived yet")));
+      box.append(card);
+    }
+    $("#rdActive").classList.toggle("hidden", !rd.active);
+    if (rd.active) {
+      $("#rdActive").textContent = `Run #${rd.active.id} (${rd.active.trigger}) is in progress — this page refreshes when it finishes.`;
+      rdTimer = setTimeout(loadReady, 8000);
+    }
+  }
+
+  async function setBasis(seg, basis, inp) {
+    const ok = await dialog({ title: basis === "latest" ? `Use the latest SPAN cycle for ${seg}?` : `Go back to start-of-day for ${seg}?`,
+      message: basis === "latest"
+        ? "Margins will use the newest SPAN cycle of the day instead of the start-of-day file. Results may differ from Zerodha / Angel One between their updates, and this basis isn't validated yet. The change is recorded in the audit log."
+        : "Margins will use the trade date's start-of-day (i1) file — the basis validated against brokers. The change is recorded in the audit log.",
+      confirmText: basis === "latest" ? "Use latest cycle" : "Use start-of-day", danger: basis === "latest" });
+    if (!ok) { inp.checked = !inp.checked; return; }
+    try { await api("/api/admin/readiness/basis", { method: "PUT", json: { segment: seg, basis } });
+      toast(`${seg}: ${BASIS_NAME[basis]}`, "ok"); }
+    catch (e) { toast("Couldn't change", "bad", e.message); }
+    loadReady();
+  }
+
+  async function rebuild(seg, btn) {
+    btn.disabled = true;
+    try { const r = await api("/api/admin/readiness/rebuild", { method: "POST", json: { segment: seg } });
+      toast(`Rebuild started · ${seg}`, "ok", `Run #${r.run.id}: parses the archived files again (nothing is downloaded).`);
+    } catch (e) { toast("Couldn't start the rebuild", "bad", e.message); }
+    loadReady();
+  }
+
+  async function showSnapshot(id) {
+    let s;
+    try { s = (await api(`/api/admin/snapshots/${id}`)).snapshot; } catch (e) { toast("Couldn't load", "bad", e.message); return; }
+    const used = (s.inputs || []).filter(i => i.used);
+    const lines = used.map(i => `#${i.upload_id} ${i.filename} (${fmtDate(i.trade_date)})`).join("\n") || "(not recorded)";
+    const rules = Object.entries(s.rules || {}).map(([f, h]) => `${f} @ ${h.slice(0, 12)}`).join("\n");
+    await dialog({ title: `Snapshot #${s.id} · ${s.segment} ${BASIS_NAME[s.basis]}`,
+      message: `${snapLine(s)}\n\nFiles used:\n${lines}\n\nRules:\n${rules}\nCode: ${(s.code_version || "").slice(0, 12)}\nSHA-256: ${(s.sha256 || "").slice(0, 16)}… · ${((s.size_bytes || 0) / 1e6).toFixed(1)} MB`,
+      confirmText: "Close", cancelText: null });
+  }
 
   // ------------------------------------------------------------ upload log
   $("#logSegment").addEventListener("change", loadLog);

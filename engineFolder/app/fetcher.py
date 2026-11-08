@@ -24,7 +24,8 @@ DEFAULTS = {"fetch_auto_enabled": False, "fetch_frequency_min": 30,
             "retention_trading_days": 7, "retention_intraday_days": 2}
 STALE_RUN_MINUTES = 45          # a run with no news for this long is marked failed
 FINAL_STATUSES = ("done", "failed", "skipped")
-ITEM_STATUSES = ("queued", "running", "archived", "have", "pending", "blocked", "failed", "not_due")
+ITEM_STATUSES = ("queued", "running", "archived", "have", "pending", "blocked", "failed", "not_due", "built")
+TRIGGERS = ("auto", "manual", "rebuild")       # rebuild: parse already-archived files, fetch nothing
 # SPAN cycles kept for the full retention window; any other SPAN cycle is "intraday"
 KEEP_CYCLES = {"i1", "i01", "s", "bod", "eod", "final", "00", "-00"}
 
@@ -143,6 +144,8 @@ def trading_date_for(now=None):
 
 
 def create_run(trigger, requested_by, segments, trade_date=None, ip=None, dispatch_fn=None, at=None):
+    if trigger not in TRIGGERS:
+        raise ValueError(f"bad trigger {trigger!r}")
     segs = ["ALL"] if not segments or "ALL" in segments else segments
     bad = [s for s in segs if s != "ALL" and s not in SEGMENT_CHOICES]
     if bad:
@@ -208,6 +211,8 @@ def tick(now=None, dispatch_fn=None):
     expire_stale()
     if t.strftime("%H:%M") >= "23:40" and db.get_setting("retention_last_day") != t.strftime("%Y%m%d"):
         out["retention"] = prune_archive()
+        from .readiness import prune_snapshots
+        out["snapshot_retention"] = prune_snapshots()
         db.set_setting("retention_last_day", t.strftime("%Y%m%d"))
     if not s["fetch_auto_enabled"]:
         return dict(out, action="none", reason="auto fetch is off")

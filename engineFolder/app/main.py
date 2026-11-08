@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, fetcher, segments, uploads
+from . import audit, auth, backup, config, db, fetcher, readiness, segments, uploads
 from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
@@ -363,6 +363,41 @@ async def fetcher_run_get(request, user):
     return ok({"run": r})
 
 
+# ---------------------------------------------------------------- data readiness (Stage 2C)
+@endpoint("admin", "superadmin")
+async def readiness_overview(request, user):
+    def work():
+        return {"segments": readiness.readiness(), "basis": readiness.basis_settings(),
+                "segment_names": {k: segments.SEGMENTS[k]["name"] for k in readiness.ALL_SEGMENTS},
+                "active": fetcher.active_run(), "can_edit": user["role"] == "superadmin"}
+    return ok(await run_in_threadpool(work))
+
+
+@endpoint("superadmin")
+async def readiness_basis(request, user):
+    b = await body_json(request)
+    return ok({"basis": await run_in_threadpool(readiness.set_basis, user, str(b.get("segment", "")).upper(),
+                                                str(b.get("basis", "")), client_ip(request))})
+
+
+@endpoint("admin", "superadmin")
+async def readiness_rebuild(request, user):
+    b = await body_json(request)
+    seg = str(b.get("segment") or "ALL").upper()
+    if seg != "ALL" and seg not in readiness.PARSERS:
+        return err("This segment has no parser yet")
+    run = await run_in_threadpool(fetcher.create_run, "rebuild", user["username"], [seg], None, client_ip(request))
+    return ok({"run": run}, 202)
+
+
+@endpoint("admin", "superadmin")
+async def snapshot_get(request, user):
+    s = await run_in_threadpool(readiness.get_snapshot, int(request.path_params["sid"]))
+    if not s:
+        return err("Snapshot not found", 404)
+    return ok({"snapshot": s})
+
+
 # ---------------------------------------------------------------- scheduler tick (Supabase pg_cron, OPS token)
 @endpoint(ops=True)
 async def ops_fetch_tick(request, user):
@@ -429,6 +464,53 @@ async def job_upload(request, user):
         str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
         {"url": str(form.get("url", ""))[:400], "run_id": rid})
     return ok({"upload": result}, 201)
+
+
+@endpoint(fetcher_job=True)
+async def job_build_inputs(request, user):
+    return ok(await run_in_threadpool(readiness.build_inputs, request.query_params.get("segment", "").upper()))
+
+
+@endpoint(fetcher_job=True)
+async def job_original(request, user):
+    name, data = await run_in_threadpool(readiness.original, int(request.path_params["uid"]))
+    return Response(data, media_type="application/octet-stream",
+                    headers={"x-filename": uploads.safe_filename(name)})
+
+
+@endpoint(fetcher_job=True)
+async def job_snapshot(request, user):
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running":
+        return err("Run is not running", 409)
+    form = await request.form(max_files=1, max_fields=8)
+    try:
+        meta = json.loads(str(form.get("meta", "{}")))
+        assert isinstance(meta, dict)
+    except Exception:
+        return err("meta must be a JSON object")
+    if str(form.get("unchanged", "")) == "1":
+        await run_in_threadpool(readiness.mark_unchanged, str(form.get("segment", "")).upper(),
+                                str(form.get("basis", "")), meta.get("fingerprint", ""))
+        return ok({"unchanged": True})
+    blob = None
+    f = form.get("file")
+    if f is not None and hasattr(f, "read"):
+        limit = readiness.MAX_SNAPSHOT_MB * 1024 * 1024
+        chunks, size = [], 0
+        while True:
+            chunk = await f.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > limit:
+                return err(f"Snapshot is larger than {readiness.MAX_SNAPSHOT_MB} MB", 413)
+            chunks.append(chunk)
+        blob = b"".join(chunks)
+    snap = await run_in_threadpool(readiness.record, rid, str(form.get("segment", "")).upper(),
+                                   str(form.get("basis", "")), meta, blob)
+    return ok({"snapshot": snap}, 201)
 
 
 # ---------------------------------------------------------------- app
@@ -504,6 +586,13 @@ routes = [
     Route("/api/fetcher/have", job_have),
     Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
+    Route("/api/fetcher/build/inputs", job_build_inputs),
+    Route("/api/fetcher/uploads/{uid:int}/original", job_original),
+    Route("/api/fetcher/runs/{rid:int}/snapshot", job_snapshot, methods=["POST"]),
+    Route("/api/admin/readiness", readiness_overview),
+    Route("/api/admin/readiness/basis", readiness_basis, methods=["PUT"]),
+    Route("/api/admin/readiness/rebuild", readiness_rebuild, methods=["POST"]),
+    Route("/api/admin/snapshots/{sid:int}", snapshot_get),
     Route("/api/fetcher/runs/{rid:int}/finish", job_finish, methods=["POST"]),
     Route("/api/ops/probe-exchanges", ops_probe_status, methods=["GET"]),
 ]

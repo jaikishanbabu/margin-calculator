@@ -109,6 +109,7 @@ def main():
     http = Http(cat.get("sessions", {}), min(int(dflt.get("timeout", 60)), 45), min(int(dflt.get("retries", 3)), 2),
                 dflt.get("min_interval_sec", 0.6), browser_headless=True)
     cal = Calendar(Path(tempfile.mkdtemp()), lambda u: http.get_json(u, "nse"))
+    rebuild = trigger == "rebuild"
     if trigger == "auto":
         try:
             if not cal.is_trading_day(d, "EQ"):
@@ -122,7 +123,7 @@ def main():
     have_refs = {h["source_ref"] for h in have_rows}
 
     sources = [s for s in cat["sources"] if s.get("enabled", True) and s["id"] in smap
-               and ("ALL" in want or smap[s["id"]][0] in want)]
+               and ("ALL" in want or smap[s["id"]][0] in want)] if not rebuild else []
     plan = []
     for src in sources:
         for variant, loop, phase in Agent.variants(src):
@@ -201,6 +202,17 @@ def main():
         if not done:
             msg = errors[-1] if errors else ""
             report(kind, ("not published yet - " if kind == "pending" else "") + msg)
+    # Stage 2C: parse what is archived into per-segment snapshots (skipped when nothing changed)
+    from app.build_job import build_segments
+    from app.readiness import PARSERS
+    build_for = [s for s in PARSERS if "ALL" in want or s in want]
+    try:
+        bc = build_segments(eng, rid, build_for, lambda u: http.get_json(u, "nse"), force=rebuild)
+        for k, v in bc.items():
+            counts[f"snapshot {k}"] = counts.get(f"snapshot {k}", 0) + v
+    except Exception as e:
+        print(f"build step failed: {type(e).__name__}: {e}")
+        counts["snapshot error"] = 1
     http.close()
     summary = ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
     eng.call("POST", f"/api/fetcher/runs/{rid}/finish", json={"status": "done", "message": summary})

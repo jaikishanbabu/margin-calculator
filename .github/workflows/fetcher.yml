@@ -1,6 +1,7 @@
 # Exchange file fetcher. Started by the engine (admin "Manually fetch" button, or the
 # Supabase scheduler tick when auto fetch is on) via workflow_dispatch with a run id.
-# Downloads from NSE / BSE / MCX and uploads each file to the engine's upload pipeline.
+# Downloads from NSE / BSE / MCX, uploads each file to the engine, then parses the archived files
+# into per-segment snapshots (Stage 2C) and uploads those too.
 name: Exchange file fetcher
 
 on:
@@ -20,7 +21,7 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

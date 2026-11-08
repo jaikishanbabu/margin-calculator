@@ -1,0 +1,183 @@
+# Margin rates that no public daily exchange file carries. Edit here, then
+# rebuild:  python -m exfetch load --segment NFO
+#
+# verified: true once our calculator matches a broker using this value, or the exchange's own
+# published rate page states it (source says which).
+# Sources are NSE Clearing circulars (nsearchives.nseindia.com/content/circulars/CMPTnnnnn.pdf).
+
+NFO:
+  # ELM for index underlyings. ael_DDMMYYYY.csv lists stocks only.
+  # Row meaning per NCL/CMPT/44391 Annexure 2: OTH = "ELM applicable on other
+  # contracts", OTM = "ELM applicable on Deep Out-of-Money options".
+  index_elm:
+    # Checked 27 Oct 2026 on NSE's "Equity derivatives margins" page
+    # (nseindia.com/static/products-services/equity-derivatives-margins): index 2% of notional,
+    # index short options >10% OTM from previous close 3% (stocks 3.5% / >30% OTM 5.25%, from the
+    # ael file); short-option notional at the last available closing price.
+    OTH: {pct: 2.0, source: "NCL/CMPT/44391 (15 May 2020); NSE equity-derivatives-margins page, checked 27 Oct 2026", verified: true}
+    OTM: {pct: 3.0, source: "NCL/CMPT/44391 (15 May 2020); NSE equity-derivatives-margins page, checked 27 Oct 2026", verified: true}
+
+  # Rules the engine applies (loaded into the `rule` table). Values are numbers;
+  # 1/0 for on/off switches.
+  rules:
+    index_deep_otm_pct:
+      value: 10
+      source: NCL/CMPT/44391
+      verified: false
+      note: index option is deep OTM if strike is >10% out of the money vs previous day's underlying close
+    stock_deep_otm_pct:
+      value: 30
+      source: NCL/CMPT/44391
+      verified: false
+      note: stock option is deep OTM if strike is >30% out of the money vs previous day's underlying close
+    index_long_dated_months:
+      value: 9
+      source: NCL/CMPT/44391
+      verified: false
+      note: index options with more than this many months to expiry use index_long_dated_elm_pct
+    index_long_dated_elm_pct:
+      value: 5
+      source: NCL/CMPT/44391
+      verified: false
+    expiry_day_short_index_option_extra_pct:
+      value: 2
+      source: NCL/CMPT/64639 (21 Oct 2024), SEBI/HO/MRD/TPD-1/P/CIR/2024/132
+      verified: false
+      note: extra ELM on short index options on their expiry day (e.g. 2% -> 4%, deep OTM 3% -> 5%)
+    calendar_spread_far_leg_elm_fraction:
+      value: 0.333333
+      source: NCL/CMPT/44391
+      verified: false
+      note: futures calendar spreads pay ELM on one third of the far month's open position value
+    expiry_day_no_calendar_elm:
+      value: 1
+      source: NCL/CMPT/65314 (indices, from 10 Feb 2025), NCL/CMPT/72906 (stocks, from 4 May 2026)
+      verified: false
+      note: on its expiry day a future gets no calendar-spread ELM treatment. (The SPAN side of the
+        same rule needs nothing here - the SPAN file puts expiring contracts in their own scan tier.)
+    short_option_elm_on_underlying:
+      value: 1
+      source: nseindia.com/static/products-services/equity-derivatives-margins
+      verified: false
+      note: short option ELM notional = units x underlying price (1), not strike (0)
+    short_option_elm_on_previous_close:
+      value: 1
+      source: Angel One, 27 Oct 2026 - RELIANCE 1200 CE 21,031.50 = 3.5% x 1,201.80 x 500, MARUTI 11300 CE
+        19,634.65 = 3.5% x 11,219.80 x 50, CDSL 1220 CE 19,883.50 = 3.5% x 1,196.00 x 475, HDFCBANK 620 CE
+        15,653.14 = 3.5% x 688.05 x 650 (previous closes, whether the stock was up or down);
+        NFO-008 NIFTY far CE 73,947.90 = 5% x 22,753.20 x 65 while i3 spot was 22,753.45
+      verified: true
+      note: >-
+        short option ELM price = the underlying's previous close, the deep-OTM test's reference (1),
+        or the SPAN cycle's spot (0). Futures ELM stays on the futures price. Caveat - Angel One was on
+        i1, whose spot is the previous close, so only NFO-008 (within Rs 1) separates the two so far.
+    span_less_net_option_value:
+      value: 1
+      source: Standard SPAN. Angel One matches it exactly on two independent baskets (26 Oct BANKNIFTY
+        short future + 54200 CE; 27 Oct NIFTY 22750 short straddle); with 0 every SPAN is lower by the
+        short premium. NSE Clearing itself applies net option value to collateral, not margin.
+      verified: false
+      note: 1 = SPAN is max(risk - (long option value - short option value), 0), so a short option's SPAN
+        includes its premium and a long option's SPAN is 0. 0 = the raw scan risk. Still to check against
+        Zerodha (long_index_call and naked short baskets); set 0 here if Zerodha shows the raw risk.
+
+NSE:
+  # NSE cash (equity). The VaR file's AMR (VaR + ELM + ad hoc) is the base rate; it
+  # already includes NSE's surveillance add-on for most ASM stocks (ad hoc column).
+  # These rules can only raise it. All capped at 100%.
+  rules:
+    asm_short_stage1_mult:
+      value: 1.5
+      source: to cite (NSE ASM framework circular)
+      verified: false
+      note: short-term ASM stage I = max(1.5 x AMR, asm_short_stage1_floor)
+    asm_short_stage1_floor:
+      value: 40
+      source: to cite
+      verified: false
+      note: "%. NSE's own AMR for these stocks was 50% on 26 Oct 2026 (e.g. ADVANCE), above this rule"
+    asm_short_stage2_mult:
+      value: 2.5
+      source: to cite
+      verified: false
+      note: short-term ASM stage II = max(2.5 x AMR, asm_short_stage2_floor)
+    asm_short_stage2_floor:
+      value: 80
+      source: to cite
+      verified: false
+    asm_long_pct:
+      value: 100
+      source: to cite
+      verified: false
+      note: long-term ASM, any stage (the VaR file already shows 100% for 130 of 137 on 26 Oct 2026)
+    t2t_pct:
+      value: 100
+      source: trade-for-trade settlement (BE / BZ / ST / SZ series) needs full value
+      verified: false
+    tradable_status:
+      value: 6
+      source: inferred, not from NSE's file spec
+      verified: false
+      note: SctyStsNrmlMkt on every actively traded row of 26 Oct 2026 (3,065 of 3,218 status-6 equity
+        rows traded; status 1 = inactive alternate series). Other codes get a warning, not a block.
+    corporate_action_move_pct:
+      value: 20
+      source: doc rule
+      verified: false
+      note: warn when close moved more than this % vs previous close (possible corporate action)
+    broker_min_intraday_pct:
+      value: 20
+      source: Zerodha equity margin table (updated 23 Oct 2026; max(20%, AMR) on 1,291 of 1,624 stocks)
+        and Dhan's margin API (27 Oct 2026; SBIN, RELIANCE intraday at 20%). A broker rule, not an exchange one.
+      verified: true
+      note: headline intraday = value x max(20%, NSE effective rate); 0 = off (NSE rate only).
+
+MCX:
+  # MCX commodity derivatives (loader/mcx.py; units in loader/mcx_contracts.yaml).
+  rules:
+    short_option_elm_on_previous_close: {value: 0, source: MCX - options are on futures, verified: false}
+    span_less_net_option_value: {value: 1, source: "both brokers, 28-29 Oct 2026: SPAN = max(scan, SOM) + premium", verified: false}
+    expiry_day_short_index_option_extra_pct: {value: 0, source: SEBI's expiry-day rule is for equity index options, verified: false}
+    expiry_day_no_calendar_elm: {value: 0, source: equity rule; MCX to check, verified: false}
+    calendar_spread_far_leg_elm_fraction: {value: 1, source: "no calendar ELM benefit known on MCX; to check (MCX-010/011)", verified: false}
+    short_option_elm_on_future_price:          # the exposure base setting (user, 29 Oct): default 1
+      value: 1
+      source: Angel One, 28-29 Oct 2026 - short CRUDEOIL 9500 CE (17-Nov options on the 19-Nov future)
+        exposure 12,145 = 1.25% x 9,716 (that future's price) x 100; 29 Oct 9800 CE 12,060 = 1.25% x 9,648 x 100
+      verified: false
+      note: >-
+        Short option ELM notional = the underlying future's price in the loaded file x units (1): in the
+        start-of-day database that is the start-of-day future price, without premium (the user's default,
+        29 Oct), as Angel One charges.
+        Zerodha charges 1.25% x (future + premium) x units instead (28 Oct: 124.9275 per unit =
+        1.25% x 9,994.20). MCXCCL's circular not found yet: keep looking, then verify.
+
+BFO:
+  # BSE F&O. ICCL's per-contract ELM file (ICCL_EDXELM<DDMMYY>) is the rate used; these are the
+  # fallback for contracts it doesn't list (flagged) and the cross-check (loader/bfo.py).
+  index_elm:
+    OTH: {pct: 2.0, source: "ICCL_EDXELM daily file (SENSEX / BANKEX options and futures at 2%)", verified: true}
+    OTM: {pct: 3.0, source: "ICCL_EDXELM daily file (deep-OTM SENSEX / BANKEX options at 3%)", verified: true}
+  rules:
+    index_deep_otm_pct: {value: 10, source: ICCL file vs previous close (cross-checked at each load), verified: false}
+    stock_deep_otm_pct: {value: 30, source: ICCL file vs previous close (cross-checked at each load), verified: false}
+    index_long_dated_months: {value: 9, source: as NSE (NCL/CMPT/44391), verified: false}
+    index_long_dated_elm_pct: {value: 5, source: "ICCL file (316 SENSEX options at 5% on 28 Oct 2026)", verified: false}
+    expiry_day_short_index_option_extra_pct:
+      value: 2
+      source: BSE notice 20241114-1 (ICCL circular 20241003-52, SEBI/HO/MRD/TPD-1/P/CIR/2024/132); in ICCL's
+        29 Oct 2026 file (SENSEX / BANKEX 29-Oct options at 4% / 5%)
+      verified: true
+      note: fallback only; ICCL's per-contract rate already includes it
+    calendar_spread_far_leg_elm_fraction: {value: 0.333333, source: as NSE, verified: false}
+    expiry_day_no_calendar_elm:
+      value: 1
+      source: "SEBI rule (index and, from May 2026, single stock); Angel One 29 Oct 2026 SENSEX 29-Oct/26-Nov
+        futures calendar: full exposure on both legs"
+      verified: false
+    short_option_elm_on_underlying: {value: 1, source: as NSE, verified: false}
+    short_option_elm_on_previous_close:
+      value: 1
+      source: Angel One 29 Oct 2026, short SENSEX 29-Oct 73300 CE exposure 58,596.82 = 4% x 20 x 73,242.05
+      verified: false
+    span_less_net_option_value: {value: 1, source: as NSE (standard SPAN), verified: false}

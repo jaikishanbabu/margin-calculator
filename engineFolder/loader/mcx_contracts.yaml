@@ -1,0 +1,56 @@
+# MCX contract units, one row per commodity (DRAFT 29 Oct 2026; not used until approved).
+#
+#   lot          the trading unit, as MCX's contract specification states it
+#   quote        the quotation / base value unit (prices in SPAN and the bhavcopy are per this)
+#   multiplier   quotation units per lot = what 1 lot's SPAN risk array (per quote unit) is multiplied by
+#   brokers      each broker's "lot" field in its instrument list, recorded here; the loader compares
+#                them every day with the brokers' lists and, on a mismatch, logs a warning and leaves
+#                that commodity unpriced
+#   verified     true once checked against MCX's contract-specification page (source)
+#
+# Estimate column (comment): the multiplier implied by the 27/28 Oct bhavcopy (Value x 1e5 /
+# (Volume x Close)), a cross-check only.
+
+GOLD:
+  lot: 1 kg
+  quote: 10 grams
+  multiplier: 100
+  brokers: {zerodha: 1, angelone: 1}
+  source: "MCX contract specification, Gold, August 2026 contract onwards (mcxindia.com/docs/default-source/products/contract-specification/gold/gold-august-2026-contract-onwards...pdf): Trading Unit 1 kg; Quotation/Base Value 10 grams; tick Re 1 per 10 grams"
+  verified: true            # bhavcopy estimate 100.0
+CRUDEOIL:
+  lot: 100 barrels
+  quote: 1 barrel
+  multiplier: 100
+  brokers: {zerodha: 100, angelone: 100}
+  source: "MCX contract specification, Crude Oil, January 2026 contract onwards (mcxindia.com/docs/default-source/products/contract-specification/crude-oil/crude-oil-january-2026-contract-onwards...pdf): Trading Unit 100 barrels; Quotation Rs per barrel; tick Re 1"
+  verified: true            # estimate 99.99
+
+# --- below: from the brokers' lists and the bhavcopy; MCX's specification page still to check ---
+CRUDEOILM:  {lot: 10 barrels, quote: 1 barrel, multiplier: 10, brokers: {zerodha: 10, angelone: 10}, verified: false}       # est 10.09
+GOLDM:      {lot: 100 grams, quote: 10 grams, multiplier: 10, brokers: {zerodha: 100, angelone: 100}, verified: false}    # est 9.99
+GOLDGUINEA: {lot: 8 grams, quote: 8 grams, multiplier: 1, brokers: {zerodha: 8, angelone: 8}, verified: false}            # est 1.0
+GOLDPETAL:  {lot: 1 gram, quote: 1 gram, multiplier: 1, brokers: {zerodha: 1, angelone: 1}, verified: false}              # est 1.0
+SILVER:     {lot: 30 kg, quote: 1 kg, multiplier: 30, brokers: {zerodha: 30, angelone: 30}, verified: false}              # est 30.0
+SILVERM:    {lot: 5 kg, quote: 1 kg, multiplier: 5, brokers: {zerodha: 5, angelone: 5}, verified: false}                 # est 5.0
+SILVERMIC:  {lot: 1 kg, quote: 1 kg, multiplier: 1, brokers: {zerodha: 1, angelone: 1}, verified: false}                  # est 1.0
+SILVER100:  {lot: 100 grams, quote: 10 grams, multiplier: 10, brokers: {angelone: 100}, verified: false}                  # est 10.02; not on Zerodha's list
+NATURALGAS: {lot: 1250 mmBtu, quote: 1 mmBtu, multiplier: 1250, brokers: {zerodha: 1250, angelone: 1250}, verified: false}  # est 1251.83
+NATGASMINI: {lot: 250 mmBtu, quote: 1 mmBtu, multiplier: 250, brokers: {zerodha: 250, angelone: 250}, verified: false}    # est 250.46
+COPPER:     {lot: 2500 kg, quote: 1 kg, multiplier: 2500, brokers: {zerodha: 2500, angelone: 2500}, verified: false}      # est 2497.08
+ZINC:       {lot: 5 MT, quote: 1 kg, multiplier: 5000, brokers: {zerodha: 5, angelone: 5}, verified: false}               # est 4986.25
+ZINCMINI:   {lot: 1 MT, quote: 1 kg, multiplier: 1000, brokers: {zerodha: 1, angelone: 1}, verified: false}               # est 996.71
+ALUMINIUM:  {lot: 5 MT, quote: 1 kg, multiplier: 5000, brokers: {zerodha: 5, angelone: 5}, verified: false}               # est 4977.24
+ALUMINI:    {lot: 1 MT, quote: 1 kg, multiplier: 1000, brokers: {zerodha: 1, angelone: 1}, verified: false}               # est 1000.69
+LEAD:       {lot: 5 MT, quote: 1 kg, multiplier: 5000, brokers: {zerodha: 5000, angelone: 5}, verified: false}            # est 5005.37
+LEADMINI:   {lot: 1 MT, quote: 1 kg, multiplier: 1000, brokers: {zerodha: 1000, angelone: 1}, verified: false}            # est 1001.3
+NICKEL:     {lot: 250 kg, quote: 1 kg, multiplier: 250, brokers: {zerodha: 250, angelone: 250}, verified: false}          # est 250.03
+MENTHAOIL:  {lot: 360 kg, quote: 1 kg, multiplier: 360, brokers: {zerodha: 360, angelone: 360}, verified: false}          # est 360.0
+ELECDMBL:   {lot: 50 MWh, quote: 1 MWh, multiplier: 50, brokers: {zerodha: 50, angelone: 50}, verified: false}            # est 50.02
+CARDAMOM:   {lot: 100 kg, quote: 1 kg, multiplier: 100, brokers: {angelone: 100}, verified: false}                        # est 99.97
+
+# --- the brokers disagree: left unpriced until MCX's specification is checked ---
+GOLDTEN:    {lot: 10 grams, quote: 10 grams, multiplier: null, brokers: {zerodha: 1, angelone: 10}, verified: false}      # est 1.0
+COTTONOIL:  {lot: null, quote: null, multiplier: null, brokers: {zerodha: 500, angelone: 5}, verified: false}             # no trades to estimate
+MCXBULLDEX: {lot: null, quote: index points, multiplier: null, brokers: {zerodha: 50, angelone: 15}, verified: false}      # index futures/options
+MCXMETLDEX: {lot: null, quote: index points, multiplier: null, brokers: {zerodha: 50, angelone: 40}, verified: false}
