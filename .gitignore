@@ -10,3 +10,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# validation (GitHub cache / artifacts)
+engineFolder/validation/data/
+engineFolder/validation/report.json

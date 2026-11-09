@@ -1,0 +1,60 @@
+# NSE cash reference baskets from brokercheck (Dhan). Checked offline by tests/test_engine_nse.py:
+# each must match a VaR batch (live at captured_at, or earlier) within max(Rs 5, 0.05%).
+# Prices are the ones sent to Dhan; intraday includes the 20% broker minimum.
+
+baskets:
+  - id: dhan_cash_001_20261027_0411
+    broker: dhan
+    source: brokercheck
+    what: "CASH-001: Large-cap EQ stock, buy"
+    captured_at: 2026-10-27 04:11
+    orders:
+      - {symbol: RELIANCE, side: buy, qty: 100, price: 1201.8, expected: {intraday: 24036.0, delivery: 120180.0}}
+    expected: {intraday: 24036.0, delivery: 120180.0}
+
+  - id: dhan_cash_002_20261027_0412
+    broker: dhan
+    source: brokercheck
+    what: "CASH-002: Trade-for-trade (BE series): 100% margin, no intraday leverage"
+    captured_at: 2026-10-27 04:12
+    orders:
+      - {symbol: AARTISURF, side: buy, qty: 100, price: 453.45, expected: {intraday: 45345.0, delivery: 45345.0}}
+    expected: {intraday: 45345.0, delivery: 45345.0}
+
+  - id: dhan_cash_004_20261027_0412
+    broker: dhan
+    source: brokercheck
+    what: "CASH-004: GSM stock"
+    captured_at: 2026-10-27 04:12
+    orders:
+      - {symbol: AQYLON, side: buy, qty: 1000, price: 13.86, expected: {intraday: 13860.0, delivery: 13860.0}}
+    expected: {intraday: 13860.0, delivery: 13860.0}
+
+  - id: dhan_cash_006_20261027_0412
+    broker: dhan
+    source: brokercheck
+    what: "CASH-006: Stock with no VaR row: 100% margin + warning"
+    captured_at: 2026-10-27 04:12
+    orders:
+      - {symbol: KHAZANCHI, side: buy, qty: 100, price: 700.0, expected: {intraday: 70000.0, delivery: 70000.0}}
+    expected: {intraday: 70000.0, delivery: 70000.0}
+
+  - id: dhan_cash_007_20261027_0413
+    broker: dhan
+    source: brokercheck
+    what: "CASH-007: Sell a large-cap stock (intraday short; delivery sell needs holdings)"
+    captured_at: 2026-10-27 04:13
+    orders:
+      - {symbol: HDFCBANK, side: sell, qty: 50, price: 688.05, expected: {intraday: 6880.5}}
+    expected: {intraday: 6880.5, delivery: 0}
+
+  - id: dhan_cash_008_20261027_0413
+    broker: dhan
+    source: brokercheck
+    what: "CASH-008: Several stocks: per-stock margins add up, no offsets"
+    captured_at: 2026-10-27 04:13
+    orders:
+      - {symbol: RELIANCE, side: buy, qty: 100, price: 1201.8, expected: {intraday: 24036.0, delivery: 120180.0}}
+      - {symbol: TCS, side: buy, qty: 50, price: 2535.0, expected: {intraday: 25350.0, delivery: 126750.0}}
+      - {symbol: INFY, side: sell, qty: 20, price: 1166.0, expected: {intraday: 4664.0}}
+    expected: {intraday: 54050.0, delivery: 246930.0}

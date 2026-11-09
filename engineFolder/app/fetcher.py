@@ -25,7 +25,7 @@ DEFAULTS = {"fetch_auto_enabled": False, "fetch_frequency_min": 30,
 STALE_RUN_MINUTES = 45          # a run with no news for this long is marked failed
 FINAL_STATUSES = ("done", "failed", "skipped")
 ITEM_STATUSES = ("queued", "running", "archived", "have", "pending", "blocked", "failed", "not_due", "built")
-TRIGGERS = ("auto", "manual", "rebuild", "calendar")   # rebuild: parse only; calendar: import holiday pages only
+TRIGGERS = ("auto", "manual", "rebuild", "calendar", "validate")   # rebuild: parse only; calendar: import holiday pages only
 # SPAN cycles kept for the full retention window; any other SPAN cycle is "intraday"
 KEEP_CYCLES = {"i1", "i01", "s", "bod", "eod", "final", "00", "-00"}
 
@@ -183,7 +183,9 @@ def dispatch_github(run_id):
     """Start the fetcher workflow on GitHub Actions (workflow_dispatch)."""
     if not (config.GITHUB_DISPATCH_TOKEN and config.GITHUB_REPO):
         raise FetchError("GITHUB_DISPATCH_TOKEN / GITHUB_REPO are not configured on the server")
-    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/fetcher.yml/dispatches"
+    r = db.query_one("SELECT trigger FROM fetch_runs WHERE id = ?", (run_id,))
+    workflow = "validate.yml" if r and r["trigger"] == "validate" else "fetcher.yml"
+    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/{workflow}/dispatches"
     body = json.dumps({"ref": config.GITHUB_REF, "inputs": {"run_id": str(run_id)}}).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
         "Authorization": f"Bearer {config.GITHUB_DISPATCH_TOKEN}", "Accept": "application/vnd.github+json",

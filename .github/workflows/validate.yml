@@ -1,0 +1,46 @@
+# Stage 3: validate NFO margins against the broker baskets (tests/fixtures/nfo_baskets.yaml).
+# Started from the admin's Data readiness page (workflow_dispatch with a run id). The 22-28 Oct 2026
+# exchange files are downloaded once from NSE's archives and kept in GitHub's cache.
+name: NFO validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id created by the engine"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exchange-fetcher          # never at the same time as a fetch
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: engineFolder/requirements.txt }
+      - run: pip install -r engineFolder/requirements.txt
+      - name: Exchange files of 22-28 Oct 2026 (cached)
+        uses: actions/cache@v4
+        with:
+          path: engineFolder/validation/data
+          key: nfo-validation-data-v1-${{ github.run_id }}     # saved again each run (adds missing days)
+          restore-keys: nfo-validation-data-v1-
+      - name: Validate (run ${{ inputs.run_id }})
+        run: cd engineFolder && python -m app.validate_job --run-id "${{ inputs.run_id }}"
+        env:
+          ENGINE_URL: ${{ vars.STAGING_URL }}
+          FETCHER_TOKEN: ${{ secrets.STAGING_FETCHER_TOKEN }}
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfo-validation-report-${{ inputs.run_id }}
+          path: engineFolder/validation/report.json
+          if-no-files-found: ignore

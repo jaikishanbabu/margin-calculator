@@ -455,11 +455,97 @@
         el("span", { class: "hint" }, r.newest_input_date ? `Newest file archived for ${fmtDate(r.newest_input_date)}` : "No files archived yet")));
       box.append(card);
     }
+    renderValidation();
     $("#rdActive").classList.toggle("hidden", !rd.active);
     if (rd.active) {
       $("#rdActive").textContent = `Run #${rd.active.id} (${rd.active.trigger}) is in progress — this page refreshes when it finishes.`;
       rdTimer = setTimeout(loadReady, 8000);
     }
+  }
+
+  // validation against brokers (Stage 3)
+  let vrep = null;
+  const money = x => x == null ? "—" : Number(x).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const V_STATUS = { passed: ["Passed", "ok"], lagged: ["Passed (older file)", "ok"], failed: ["Failed", "bad"],
+                     error: ["Could not run", "bad"], pending: ["No broker figures", ""] };
+
+  function renderValidation() {
+    const box = $("#rdValidation"); box.textContent = "";
+    const v = (rd.validation || {}).NFO;
+    if (!v) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    const L = v.latest, s = L ? L.summary : {};
+    box.append(el("div", { class: "eyebrow" }, "Accuracy"),
+      el("div", { class: "rd-head" }, el("h2", {}, "NSE F&O: validation against brokers"),
+        pill(v.validated ? "Validated" : "Not validated", v.validated ? "ok" : "warn")),
+      el("p", { class: "lead" }, "Your engine tests and the 202 Zerodha / Angel One baskets captured 26–28 Oct, re-run on GitHub with those days' exchange files. " +
+        "A basket passes when SPAN, exposure and total are each within 0.05% or ₹5 of the broker's figures."));
+    if (!v.validated) box.append(el("p", { class: "rd-note warn" }, v.reason));
+    if (L) box.append(el("div", { class: "v-chips" },
+      chip(`${(s.baskets_passed || 0) + (s.baskets_lagged || 0)} baskets passed`, "ok"),
+      s.baskets_failed ? chip(`${s.baskets_failed} failed`, "bad") : null,
+      s.baskets_error ? chip(`${s.baskets_error} could not run`, "bad") : null,
+      s.baskets_pending ? chip(`${s.baskets_pending} without figures`, "") : null,
+      chip(`tests ${s.tests_passed || 0} passed` + (s.tests_failed ? `, ${s.tests_failed} failed` : ""), s.tests_failed ? "bad" : "ok"),
+      el("span", { class: "hint" }, `run #${L.run_id} · ${ist(L.created_at)} · code ${(L.code_version || "").slice(0, 7)}`)));
+    const run = el("button", { type: "button", class: "small" }, L ? "Run validation again" : "Run validation");
+    run.disabled = !!rd.active;
+    run.addEventListener("click", async () => {
+      run.disabled = true;
+      try { const r = await api("/api/admin/validation/run", { method: "POST", json: { segment: "NFO" } });
+        toast("Validation started", "ok", `Run #${r.run.id} on GitHub. The first run downloads the 22–28 Oct files (about 10–20 minutes); later runs reuse them.`); }
+      catch (e) { toast("Couldn't start", "bad", e.message); }
+      loadReady();
+    });
+    const actions = el("div", { class: "rd-actions" }, run);
+    if (L) actions.append(el("button", { type: "button", class: "secondary small", onclick: () => showReport() }, vrep ? "Refresh report" : "Show report"));
+    box.append(actions, el("div", { id: "vReport" }));
+    if (vrep) drawReport();
+  }
+  const chip = (t, k) => el("span", { class: "v-chip " + (k || "") }, t);
+
+  async function showReport() {
+    try { vrep = (await api("/api/admin/validation?segment=NFO")).report; } catch (e) { toast("Couldn't load the report", "bad", e.message); return; }
+    drawReport();
+  }
+
+  function basketRow(b) {
+    const [w, k] = V_STATUS[b.status] || [b.status, ""];
+    const legs = b.legs.map(l => `${l.side === "sell" ? "−" : "+"}${l.qty} ${l.symbol} ${l.type}${l.strike ? " " + l.strike : ""} ${l.expiry ? l.expiry.slice(5) : ""}`).join(", ");
+    const row = el("details", { class: "v-basket " + b.status },
+      el("summary", {}, el("span", { class: "v-id" }, b.id), pill(w, k), el("span", { class: "hint" }, `${b.broker} · ${b.captured_at || ""}`)));
+    row.append(el("div", { class: "hint" }, legs), el("div", { class: "hint" }, b.detail || ""));
+    if (b.want) {
+      const keys = Object.keys(b.want);
+      row.append(el("div", { class: "v-table" },
+        el("div", { class: "v-tr head" }, el("span", {}, ""), el("span", {}, "Broker"), el("span", {}, "Ours"), el("span", {}, "Diff")),
+        ...keys.map(key => el("div", { class: "v-tr" + ((b.diff || {})[key] != null && Math.abs(b.diff[key]) > Math.max(5, Math.abs(b.want[key]) * 0.0005) ? " off" : "") },
+          el("span", {}, key), el("span", {}, money(b.want[key])), el("span", {}, money((b.ours || {})[key])), el("span", {}, money((b.diff || {})[key]))))));
+    }
+    if (b.tried && b.tried.length) row.append(el("div", { class: "hint" }, "SPAN files tried: " + b.tried.map(t => t.cycle + (t.error ? " (error)" : "")).join(", ")));
+    return row;
+  }
+
+  function drawReport() {
+    const box = $("#vReport"); if (!box || !vrep) return;
+    box.textContent = "";
+    const R = vrep.report;
+    if (R.crash) box.append(el("p", { class: "rd-note bad" }, "The validation crashed: " + R.crash.slice(-300)));
+    const days = Object.entries(R.data || {}).map(([d, c]) => `${d.slice(8)}-${d.slice(5, 7)}: ${c.join(" ") || "none"}`).join(" · ");
+    box.append(el("p", { class: "hint" }, "SPAN files used: " + (days || "none")));
+    const bad = R.baskets.filter(b => ["failed", "error"].includes(b.status));
+    const good = R.baskets.filter(b => ["passed", "lagged"].includes(b.status));
+    const pend = R.baskets.filter(b => b.status === "pending");
+    const ft = R.tests.filter(t => t.status === "failed");
+    if (ft.length) box.append(el("h3", {}, `Engine tests failed (${ft.length})`),
+      ...ft.map(t => el("details", { class: "v-basket failed" }, el("summary", {}, el("span", { class: "v-id" }, t.name), pill("Failed", "bad")),
+        el("pre", { class: "v-pre" }, t.detail))));
+    if (bad.length) box.append(el("h3", {}, `Baskets that didn't match (${bad.length})`), ...bad.map(basketRow));
+    if (good.length) { const d = el("details", { class: "v-group" }, el("summary", {}, `Baskets that matched (${good.length})`)); good.forEach(b => d.append(basketRow(b))); box.append(d); }
+    if (pend.length) box.append(el("p", { class: "hint" }, `Without broker figures: ${pend.map(b => b.id).join(", ")}`));
+    const okTests = R.tests.filter(t => t.status !== "failed");
+    box.append(el("p", { class: "hint" }, `Engine tests: ${okTests.filter(t => t.status === "passed").length} passed` +
+      (okTests.some(t => t.status === "skipped") ? `, ${okTests.filter(t => t.status === "skipped").length} skipped (files missing)` : "")));
   }
 
   async function setBasis(seg, basis, inp) {

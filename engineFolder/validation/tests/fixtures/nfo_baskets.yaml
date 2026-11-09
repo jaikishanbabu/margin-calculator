@@ -1,0 +1,1997 @@
+# Broker reference baskets for the NFO engine: Zerodha (zerodha.com/margin-calculator/SPAN/)
+# and Angel One (angelone.in margin calculator).
+#
+# How to capture (Zerodha set planned for Tue 27 Oct 2026, NIFTY's and the stocks' monthly expiry)
+#   - Keep the agent running all day (logs/agent.log) so every SPAN cycle is
+#     saved in data/NFO/span/<date>/.
+#   - Enter each basket on the broker's calculator exactly as listed here; fill in the nulls.
+#   - captured_at: the IST time you read the numbers, "YYYY-MM-DD HH:MM". The
+#     test loads the SPAN cycle live at that time with that day's files.
+#   - expected: copy SPAN, Exposure and Total exactly as shown; optional
+#     net_premium (as shown, negative = received) and benefit (sum of the legs
+#     alone - basket). A leg may carry its own `expected` {span, exposure, total}:
+#     that leg margined on its own.
+#   - broker: zerodha | angelone
+#   - The test tries the cycle live at captured_at first, then every earlier cycle
+#     (that day's and the previous day's), and passes on the first that matches,
+#     printing which file the broker was on. Brokers lag: Angel One was on Monday's
+#     i1 at 19:45 Monday and on Monday's final file at 01:14 Tuesday.
+#   - span_cycle (optional): check against this cycle of the capture day only.
+#   - Rules come from loader/static_rates.yaml (span_less_net_option_value = 1).
+#
+# Legs (all NSE / NFO)
+#   symbol   NSE symbol (NIFTY, RELIANCE)
+#   expiry   YYYY-MM-DD as listed by NSE (prefilled from the contract data; change
+#            it if you pick another expiry on the broker's calculator)
+#   type     CE | PE | FUT
+#   strike   for CE/PE; null for FUT
+#   side     buy | sell
+#   qty      units, i.e. lots x lot size (NIFTY 65, RELIANCE 500); the test
+#            checks it is a whole number of lots
+#
+# A basket with any null is reported as pending, not failed. When a basket
+# matches, flip the static_rates.yaml rules listed under `checks` to verified: true.
+
+tolerance_pct: 0.05         # allowed difference on each figure, % of the broker's value. Keep it tight:
+                            # consecutive SPAN cycles can differ by under 0.5%
+tolerance_abs: 5            # ... or this many rupees, whichever is larger
+
+baskets:
+  - id: naked_short_index_call
+    broker: zerodha
+    what: sell one NIFTY call near the money, weekly expiry (not the one expiring that day)
+    checks: [index_elm.OTH 2%, short_option_elm_on_underlying, span_less_net_option_value]
+    captured_at: null
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-03, type: CE, strike: null, side: sell, qty: null}
+    expected: {span: null, exposure: null, total: null}
+
+  - id: hedged_put_spread
+    broker: zerodha
+    what: NIFTY put credit spread - sell the higher strike, buy a lower strike, same expiry
+    checks: [span_less_net_option_value, hedge benefit, ELM only on the short leg]
+    captured_at: null
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-03, type: PE, strike: null, side: sell, qty: null}
+      - {symbol: NIFTY, expiry: 2026-11-03, type: PE, strike: null, side: buy, qty: null}
+    expected: {span: null, exposure: null, total: null}
+
+  - id: nifty_nov_dec_calendar
+    broker: zerodha
+    what: NIFTY futures calendar - buy November, sell December
+    checks: [calendar spread charge (SPAN dSpread), calendar_spread_far_leg_elm_fraction]
+    captured_at: null
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: null}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: null}
+    expected: {span: null, exposure: null, total: null}
+
+  - id: deep_otm_reliance_short_call
+    broker: zerodha
+    what: sell a RELIANCE November call more than 30% above Monday 26 Oct's close
+      (close x 1.30; with RELIANCE near 1,200 that means a strike of 1,600 or more)
+    checks: [stock_deep_otm_pct 30%, ael OTM row 5.25%]
+    captured_at: null
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: null, side: sell, qty: null}
+    expected: {span: null, exposure: null, total: null}
+
+  - id: expiry_day_call_and_future
+    broker: zerodha
+    what: on 27 Oct, sell a NIFTY call expiring that day, plus a NIFTY November future
+    checks: [expiry_day_short_index_option_extra_pct, SPAN expiry-day scan tiers (27 Oct in its own tier)]
+    captured_at: null       # must be on 2026-10-27
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: null, side: sell, qty: null}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: null, qty: null}   # buy or sell
+    expected: {span: null, exposure: null, total: null}
+
+  - id: long_index_call
+    broker: zerodha
+    what: buy one NIFTY call, weekly expiry (not the one expiring that day)
+    checks: [span_less_net_option_value - 0 shows about the premium as SPAN, 1 shows 0]
+    captured_at: null
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-03, type: CE, strike: null, side: buy, qty: null}
+    expected: {span: null, exposure: null, total: null}
+
+  # Angel One, Mon 26 Oct 2026 after the close. At 19:45 the final 's' cycle (16:52)
+  # was live, but Angel One's figures match the day's i1 file (made 24 Oct 01:25)
+  # exactly and no later cycle.
+  - id: angelone_banknifty_short_future
+    broker: angelone
+    what: sell one lot of the BANKNIFTY November future
+    checks: [index future SPAN scan risk, index_elm.OTH 2% on the future price]
+    captured_at: 2026-10-26 19:45
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 151612.80, exposure: 32731.32, total: 184344.12}
+
+  - id: angelone_banknifty_future_and_call
+    broker: angelone
+    what: the short future above plus a BANKNIFTY 23 Nov 54200 call (side to be confirmed)
+    checks: [span_less_net_option_value, short option ELM]
+    # Pending until the CE side is confirmed. With the call SOLD the engine gives all
+    # four figures exactly on i1 (a bought call matches nothing).
+    captured_at: 2026-10-26 19:45
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54200, side: null, qty: 30}
+    expected: {span: 313447.20, exposure: 65303.73, total: 378750.93, net_premium: -37191}
+
+  # Angel One, Tue 27 Oct 2026 01:14, before the open. Matches Monday's final 's'
+  # file exactly. Each leg's `expected` is the leg margined on its own.
+  - id: angelone_nifty_short_straddle
+    broker: angelone
+    what: sell one lot each of the NIFTY 23 Nov 22750 call and put
+    checks: [span_less_net_option_value, straddle benefit (scan risk nets across the legs), short option ELM]
+    captured_at: 2026-10-27 01:14
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65,
+         expected: {span: 147633.20, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65,
+         expected: {span: 131453.40, exposure: 29579.16, total: 161032.56}}
+    expected: {span: 148933.20, exposure: 59158.32, total: 208091.52, net_premium: -54395.25,
+               benefit: 130153.40}
+
+  - id: angelone_nfo_001_20261026_1236
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-26 12:36
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30}
+    expected: {span: 164798.7, exposure: 32572.41, total: 197371.11, net_premium: -39031.5}
+
+  - id: angelone_nfo_002_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65}
+    expected: {span: 137152.6, exposure: 29349.58, total: 166502.18, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 136082.05, exposure: 29349.58, total: 165431.63, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 500}
+    expected: {span: 84705, exposure: 20772.5, total: 105477.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65}
+    expected: {span: 127819.9, exposure: 29380, total: 157199.9, net_premium: -4319.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 4319.25, benefit: 0}
+
+  - id: angelone_nfo_007_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007: Sold index option more than 10% out of the money: exposure 3%"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 25050, side: sell, qty: 65}
+    expected: {span: 39934.7, exposure: 44070, total: 84004.7, net_premium: -39, benefit: 0}
+
+  - id: angelone_nfo_008_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65}
+    expected: {span: 350641.2, exposure: 73450, total: 424091.2, net_premium: -122766.8, benefit: 0}
+
+  - id: angelone_nfo_009_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009: Sold stock option more than 30% out of the money: OTM row rate"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-10-27, type: CE, strike: 1560, side: sell, qty: 500}
+    expected: {span: 25, exposure: 31237.5, total: 31262.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_010_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-10-27, type: PE, strike: 22750, side: sell, qty: 65}
+    expected: {span: 150720.05, exposure: 58760, total: 209480.05, net_premium: -20302.75, benefit: 126869.6}
+
+  - id: angelone_nfo_011_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22950, side: buy, qty: 65}
+    expected: {span: 13078, exposure: 29380, total: 42458, net_premium: -2557.75, benefit: 114741.9}
+
+  - id: angelone_nfo_012_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 12423.94, exposure: 29380, total: 41803.94, net_premium: 19600.75, benefit: 115395.96}
+
+  - id: angelone_nfo_013_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-10-27, type: PE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 0, exposure: 29349.58, total: 29349.58, net_premium: 15983.5, benefit: 137152.6}
+
+  - id: angelone_nfo_014_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 23050, side: sell, qty: 65}
+    expected: {span: 137903.35, exposure: 58729.58, total: 196632.93, net_premium: -1147.25, benefit: 107369.6}
+
+  - id: angelone_nfo_015_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 26606.45, exposure: 9819.9, total: 36426.35, net_premium: 0, benefit: 296289.02}
+
+  - id: angelone_nfo_016_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 195}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 130}
+    expected: {span: 187658.9, exposure: 48989.37, total: 236648.27, net_premium: 0, benefit: 595284.65}
+
+  - id: angelone_nfo_017_20261026_1950
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-26 19:50
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: BANKNIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 288021.4, exposure: 61894.9, total: 349916.3, net_premium: 0, benefit: 0}
+
+  - id: dhan_nfo_002_20261027_0414
+    broker: dhan
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 04:14
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+    expected: {span: 137834.45, exposure: 29459.69, total: 167294.14}
+
+  - id: dhan_nfo_003_20261027_0414
+    broker: dhan
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 04:14
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 136753.5, exposure: 29459.69, total: 166213.19}
+
+  - id: dhan_nfo_004_20261027_0415
+    broker: dhan
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 04:15
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500}
+    expected: {span: 85125, exposure: 20884.5, total: 106009.5}
+
+  - id: dhan_nfo_017_20261027_0416
+    broker: dhan
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 04:16
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 289447.25, exposure: 62191.01, total: 351638.26}
+
+  - id: angelone_nfo_001_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 168290.1, exposure: 32620.02, total: 200910.12}}
+    expected: {span: 168290.1, exposure: 32620.02, total: 200910.12, net_premium: -41148, benefit: 0}
+
+  - id: angelone_nfo_002_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+    expected: {span: 138763.3, exposure: 29758.82, total: 168522.12, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85965, exposure: 21122.5, total: 107087.5}}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+    expected: {span: 147633.2, exposure: 29579.16, total: 177212.36, net_premium: -31866.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 31866.25, benefit: 0}
+
+  - id: angelone_nfo_007_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007: Sold index option more than 10% out of the money: exposure 3%"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 25050, side: sell, qty: 65, expected: {span: 47283.6, exposure: 44368.74, total: 91652.34}}
+    expected: {span: 47283.6, exposure: 44368.74, total: 91652.34, net_premium: -364, benefit: 0}
+
+  - id: angelone_nfo_008_20261027_1231
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-27 12:31
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360745.45, exposure: 73947.9, total: 434693.35}}
+    expected: {span: 360745.45, exposure: 73947.9, total: 434693.35, net_premium: -128991.85, benefit: 0}
+
+  - id: angelone_nfo_010_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65, expected: {span: 131453.4, exposure: 29579.16, total: 161032.56}}
+    expected: {span: 148933.2, exposure: 59158.32, total: 208091.52, net_premium: -54395.25, benefit: 130153.4}
+
+  - id: angelone_nfo_011_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22950, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 14071.85, exposure: 29579.16, total: 43651.01, net_premium: -7637.5, benefit: 133561.35}
+
+  - id: angelone_nfo_012_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 15410.62, exposure: 29579.16, total: 44989.78, net_premium: 16165.5, benefit: 132222.58}
+
+  - id: angelone_nfo_013_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 8594.3, exposure: 29758.82, total: 38353.12, net_premium: 22529, benefit: 130169}
+
+  - id: angelone_nfo_014_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23050, side: sell, qty: 65, expected: {span: 127761.4, exposure: 29579.16, total: 157340.56}}
+    expected: {span: 139313.2, exposure: 59337.98, total: 198651.18, net_premium: -21001.5, benefit: 127211.5}
+
+  - id: angelone_nfo_015_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138581.95, exposure: 29959.41, total: 168541.36}}
+    expected: {span: 27184.95, exposure: 9986.47, total: 37171.42, net_premium: 0, benefit: 299892.06}
+
+  - id: angelone_nfo_016_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416289.9, exposure: 89276.46, total: 505566.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277163.9, exposure: 59918.82, total: 337082.72}}
+    expected: {span: 189419.1, exposure: 49731.76, total: 239150.86, net_premium: 0, benefit: 603498.22}
+
+  - id: angelone_nfo_017_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 151808.7, exposure: 32863.56, total: 184672.26}}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_019_20261027_1232
+    broker: angelone
+    source: brokercheck
+    what: "NFO-019: Sold index option on its expiry day: extra 2% exposure"
+    captured_at: 2026-10-27 12:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 139247.55, exposure: 59158.32, total: 198405.87}}
+    expected: {span: 139247.55, exposure: 59158.32, total: 198405.87, net_premium: -6730.75, benefit: 0}
+
+  - id: angelone_nfo_020_20261027_1233
+    broker: angelone
+    source: brokercheck
+    what: "NFO-020: Futures calendar spread on near-month expiry day: no benefit"
+    captured_at: 2026-10-27 12:33
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 137815.6, exposure: 29597.49, total: 167413.09}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 275472.6, exposure: 59356.31, total: 334828.91, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_009_20261027_1311
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009: Sold stock option more than 30% out of the money: OTM row rate"
+    captured_at: 2026-10-27 13:11
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1560, side: sell, qty: 500, expected: {span: 6700, exposure: 21031.5, total: 27731.5}}
+    expected: {span: 6700, exposure: 21031.5, total: 27731.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_001_20261027_1331
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-27 13:31
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 168290.1, exposure: 32620.02, total: 200910.12}}
+    expected: {span: 168290.1, exposure: 32620.02, total: 200910.12, net_premium: -41148, benefit: 0}
+
+  - id: angelone_nfo_002_20261027_1331
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 13:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+    expected: {span: 138763.3, exposure: 29758.82, total: 168522.12, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261027_1331
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 13:31
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85965, exposure: 21122.5, total: 107087.5}}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+    expected: {span: 147633.2, exposure: 29579.16, total: 177212.36, net_premium: -31866.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 31866.25, benefit: 0}
+
+  - id: angelone_nfo_007a_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007a: Sold index option well beyond 10% out of the money (15%): deep-OTM exposure 3%"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 26200, side: sell, qty: 65, expected: {span: 23897.9, exposure: 44368.74, total: 68266.64}}
+    expected: {span: 23897.9, exposure: 44368.74, total: 68266.64, net_premium: -16.25, benefit: 0}
+
+  - id: angelone_nfo_007b_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007b: Sold index option inside 10% out of the money (5%): normal exposure 2%"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23900, side: sell, qty: 65, expected: {span: 78504.4, exposure: 29579.16, total: 108083.56}}
+    expected: {span: 78504.4, exposure: 29579.16, total: 108083.56, net_premium: -4121, benefit: 0}
+
+  - id: angelone_nfo_008_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360745.45, exposure: 73947.9, total: 434693.35}}
+    expected: {span: 360745.45, exposure: 73947.9, total: 434693.35, net_premium: -128991.85, benefit: 0}
+
+  - id: angelone_nfo_009a_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500, expected: {span: 855, exposure: 31547.25, total: 32402.25}}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_009b_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500, expected: {span: 19105, exposure: 21031.5, total: 40136.5}}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_010_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65, expected: {span: 131453.4, exposure: 29579.16, total: 161032.56}}
+    expected: {span: 148933.2, exposure: 59158.32, total: 208091.52, net_premium: -54395.25, benefit: 130153.4}
+
+  - id: angelone_nfo_011_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22950, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 14071.85, exposure: 29579.16, total: 43651.01, net_premium: -7637.5, benefit: 133561.35}
+
+  - id: angelone_nfo_012_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 15410.62, exposure: 29579.16, total: 44989.78, net_premium: 16165.5, benefit: 132222.58}
+
+  - id: angelone_nfo_013_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 8594.3, exposure: 29758.82, total: 38353.12, net_premium: 22529, benefit: 130169}
+
+  - id: angelone_nfo_014_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23050, side: sell, qty: 65, expected: {span: 127761.4, exposure: 29579.16, total: 157340.56}}
+    expected: {span: 139313.2, exposure: 59337.98, total: 198651.18, net_premium: -21001.5, benefit: 127211.5}
+
+  - id: angelone_nfo_015_20261027_1332
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 13:32
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138581.95, exposure: 29959.41, total: 168541.36}}
+    expected: {span: 27184.95, exposure: 9986.47, total: 37171.42, net_premium: 0, benefit: 299892.06}
+
+  - id: angelone_nfo_016_20261027_1333
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 13:33
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416289.9, exposure: 89276.46, total: 505566.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277163.9, exposure: 59918.82, total: 337082.72}}
+    expected: {span: 189419.1, exposure: 49731.76, total: 239150.86, net_premium: 0, benefit: 603498.22}
+
+  - id: angelone_nfo_017_20261027_1333
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 13:33
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 151808.7, exposure: 32863.56, total: 184672.26}}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_019_20261027_1333
+    broker: angelone
+    source: brokercheck
+    what: "NFO-019: Sold index option on its expiry day: extra 2% exposure"
+    captured_at: 2026-10-27 13:33
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 139247.55, exposure: 59158.32, total: 198405.87}}
+    expected: {span: 139247.55, exposure: 59158.32, total: 198405.87, net_premium: -6730.75, benefit: 0}
+
+  - id: angelone_nfo_020_20261027_1333
+    broker: angelone
+    source: brokercheck
+    what: "NFO-020: Futures calendar spread on near-month expiry day: no benefit"
+    captured_at: 2026-10-27 13:33
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 137815.6, exposure: 29597.49, total: 167413.09}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 275472.6, exposure: 59356.31, total: 334828.91, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_001_20261027_1456
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-27 14:56
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 168290.1, exposure: 32620.02, total: 200910.12}}
+    expected: {span: 168290.1, exposure: 32620.02, total: 200910.12, net_premium: -41148, benefit: 0}
+
+  - id: angelone_nfo_002_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+    expected: {span: 138763.3, exposure: 29758.82, total: 168522.12, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85965, exposure: 21122.5, total: 107087.5}}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22700, side: sell, qty: 65, expected: {span: 150833.15, exposure: 29579.16, total: 180412.31}}
+    expected: {span: 150833.15, exposure: 29579.16, total: 180412.31, net_premium: -33738.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22700, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 33738.25, benefit: 0}
+
+  - id: angelone_nfo_007a_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007a: Sold index option well beyond 10% out of the money (15%): deep-OTM exposure 3%"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 26200, side: sell, qty: 65, expected: {span: 23897.9, exposure: 44368.74, total: 68266.64}}
+    expected: {span: 23897.9, exposure: 44368.74, total: 68266.64, net_premium: -16.25, benefit: 0}
+
+  - id: angelone_nfo_007b_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007b: Sold index option inside 10% out of the money (5%): normal exposure 2%"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23900, side: sell, qty: 65, expected: {span: 78504.4, exposure: 29579.16, total: 108083.56}}
+    expected: {span: 78504.4, exposure: 29579.16, total: 108083.56, net_premium: -4121, benefit: 0}
+
+  - id: angelone_nfo_008_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360745.45, exposure: 73947.9, total: 434693.35}}
+    expected: {span: 360745.45, exposure: 73947.9, total: 434693.35, net_premium: -128991.85, benefit: 0}
+
+  - id: angelone_nfo_009a_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500, expected: {span: 855, exposure: 31547.25, total: 32402.25}}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_009b_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500, expected: {span: 19105, exposure: 21031.5, total: 40136.5}}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_010_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22700, side: sell, qty: 65, expected: {span: 150833.15, exposure: 29579.16, total: 180412.31}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22700, side: sell, qty: 65, expected: {span: 128664.25, exposure: 29579.16, total: 158243.41}}
+    expected: {span: 152309.95, exposure: 59158.32, total: 211468.27, net_premium: -55116.75, benefit: 127187.45}
+
+  - id: angelone_nfo_011_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22700, side: sell, qty: 65, expected: {span: 150833.15, exposure: 29579.16, total: 180412.31}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22900, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 13778.7, exposure: 29579.16, total: 43357.86, net_premium: -7588.75, benefit: 137054.45}
+
+  - id: angelone_nfo_012_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22700, side: sell, qty: 65, expected: {span: 150833.15, exposure: 29579.16, total: 180412.31}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22700, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 15309.53, exposure: 29579.16, total: 44888.69, net_premium: 16532.75, benefit: 135523.62}
+
+  - id: angelone_nfo_013_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22700, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 11511.5, exposure: 29758.82, total: 41270.32, net_premium: 21378.5, benefit: 127251.8}
+
+  - id: angelone_nfo_014_20261027_1457
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-27 14:57
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23000, side: sell, qty: 65, expected: {span: 130992.55, exposure: 29579.16, total: 160571.71}}
+    expected: {span: 139607, exposure: 59337.98, total: 198944.98, net_premium: -22613.5, benefit: 130148.85}
+
+  - id: angelone_nfo_015_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138581.95, exposure: 29959.41, total: 168541.36}}
+    expected: {span: 27184.95, exposure: 9986.47, total: 37171.42, net_premium: 0, benefit: 299892.06}
+
+  - id: angelone_nfo_016_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416289.9, exposure: 89276.46, total: 505566.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277163.9, exposure: 59918.82, total: 337082.72}}
+    expected: {span: 189419.1, exposure: 49731.76, total: 239150.86, net_premium: 0, benefit: 603498.22}
+
+  - id: angelone_nfo_017_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 151808.7, exposure: 32863.56, total: 184672.26}}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_019_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-019: Sold index option on its expiry day: extra 2% exposure"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: CE, strike: 22700, side: sell, qty: 65, expected: {span: 142634.05, exposure: 59158.32, total: 201792.37}}
+    expected: {span: 142634.05, exposure: 59158.32, total: 201792.37, net_premium: -8703.5, benefit: 0}
+
+  - id: angelone_nfo_020_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-020: Futures calendar spread on near-month expiry day: no benefit"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: NIFTY, expiry: 2026-10-27, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 137815.6, exposure: 29597.49, total: 167413.09}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 275472.6, exposure: 59356.31, total: 334828.91, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_022_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500, expected: {span: 96310, exposure: 21031.5, total: 117341.5}}
+    expected: {span: 96310, exposure: 21031.5, total: 117341.5, net_premium: -24400, benefit: 0}
+
+  - id: angelone_nfo_023_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50, expected: {span: 83974, exposure: 19634.65, total: 103608.65}}
+    expected: {span: 83974, exposure: 19634.65, total: 103608.65, net_premium: -19662.5, benefit: 0}
+
+  - id: angelone_nfo_024_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475, expected: {span: 97251.5, exposure: 19883.5, total: 117135}}
+    expected: {span: 97251.5, exposure: 19883.5, total: 117135, net_premium: -18335, benefit: 0}
+
+  - id: angelone_nfo_025_20261027_1458
+    broker: angelone
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-27 14:58
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650, expected: {span: 108979, exposure: 15653.14, total: 124632.14}}
+    expected: {span: 108979, exposure: 15653.14, total: 124632.14, net_premium: -46358, benefit: 0}
+
+  - id: angelone_nfo_001_20261027_1600
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-27 16:00
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 168290.1, exposure: 32620.02, total: 200910.12}}
+    expected: {span: 168290.1, exposure: 32620.02, total: 200910.12, net_premium: -41148, benefit: 0}
+
+  - id: angelone_nfo_002_20261027_1601
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+    expected: {span: 138763.3, exposure: 29758.82, total: 168522.12, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261027_1601
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261027_1601
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85965, exposure: 21122.5, total: 107087.5}}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+    expected: {span: 147633.2, exposure: 29579.16, total: 177212.36, net_premium: -31866.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 31866.25, benefit: 0}
+
+  - id: angelone_nfo_007a_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007a: Sold index option well beyond 10% out of the money (15%): deep-OTM exposure 3%"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 26200, side: sell, qty: 65, expected: {span: 23897.9, exposure: 44368.74, total: 68266.64}}
+    expected: {span: 23897.9, exposure: 44368.74, total: 68266.64, net_premium: -16.25, benefit: 0}
+
+  - id: angelone_nfo_007b_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007b: Sold index option inside 10% out of the money (5%): normal exposure 2%"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23900, side: sell, qty: 65, expected: {span: 78504.4, exposure: 29579.16, total: 108083.56}}
+    expected: {span: 78504.4, exposure: 29579.16, total: 108083.56, net_premium: -4121, benefit: 0}
+
+  - id: angelone_nfo_008_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360745.45, exposure: 73947.9, total: 434693.35}}
+    expected: {span: 360745.45, exposure: 73947.9, total: 434693.35, net_premium: -128991.85, benefit: 0}
+
+  - id: angelone_nfo_009a_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500, expected: {span: 855, exposure: 31547.25, total: 32402.25}}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_009b_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500, expected: {span: 19105, exposure: 21031.5, total: 40136.5}}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_010_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65, expected: {span: 131453.4, exposure: 29579.16, total: 161032.56}}
+    expected: {span: 148933.2, exposure: 59158.32, total: 208091.52, net_premium: -54395.25, benefit: 130153.4}
+
+  - id: angelone_nfo_011_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22950, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 14071.85, exposure: 29579.16, total: 43651.01, net_premium: -7637.5, benefit: 133561.35}
+
+  - id: angelone_nfo_012_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 15410.62, exposure: 29579.16, total: 44989.78, net_premium: 16165.5, benefit: 132222.58}
+
+  - id: angelone_nfo_013_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 8594.3, exposure: 29758.82, total: 38353.12, net_premium: 22529, benefit: 130169}
+
+  - id: angelone_nfo_014_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23050, side: sell, qty: 65, expected: {span: 127761.4, exposure: 29579.16, total: 157340.56}}
+    expected: {span: 139313.2, exposure: 59337.98, total: 198651.18, net_premium: -21001.5, benefit: 127211.5}
+
+  - id: angelone_nfo_015_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138581.95, exposure: 29959.41, total: 168541.36}}
+    expected: {span: 27184.95, exposure: 9986.47, total: 37171.42, net_premium: 0, benefit: 299892.06}
+
+  - id: angelone_nfo_016_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416289.9, exposure: 89276.46, total: 505566.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277163.9, exposure: 59918.82, total: 337082.72}}
+    expected: {span: 189419.1, exposure: 49731.76, total: 239150.86, net_premium: 0, benefit: 603498.22}
+
+  - id: angelone_nfo_017_20261027_1602
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 151808.7, exposure: 32863.56, total: 184672.26}}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_022_20261027_1603
+    broker: angelone
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500, expected: {span: 96310, exposure: 21031.5, total: 117341.5}}
+    expected: {span: 96310, exposure: 21031.5, total: 117341.5, net_premium: -24400, benefit: 0}
+
+  - id: angelone_nfo_023_20261027_1603
+    broker: angelone
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50, expected: {span: 83974, exposure: 19634.65, total: 103608.65}}
+    expected: {span: 83974, exposure: 19634.65, total: 103608.65, net_premium: -19662.5, benefit: 0}
+
+  - id: angelone_nfo_024_20261027_1603
+    broker: angelone
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475, expected: {span: 97251.5, exposure: 19883.5, total: 117135}}
+    expected: {span: 97251.5, exposure: 19883.5, total: 117135, net_premium: -18335, benefit: 0}
+
+  - id: angelone_nfo_025_20261027_1603
+    broker: angelone
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650, expected: {span: 108979, exposure: 15653.14, total: 124632.14}}
+    expected: {span: 108979, exposure: 15653.14, total: 124632.14, net_premium: -46358, benefit: 0}
+
+  - id: zerodha_nfo_002_20261027_1601
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+    expected: {span: 138763, exposure: 29758.82, total: 168521.82, net_premium: 0}
+
+  - id: zerodha_nfo_003_20261027_1601
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0}
+
+  - id: zerodha_nfo_004_20261027_1601
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 16:01
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0}
+
+  - id: zerodha_nfo_009a_20261027_1602
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25}
+
+  - id: zerodha_nfo_009b_20261027_1602
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25}
+
+  - id: zerodha_nfo_015_20261027_1602
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 27185, exposure: 9986.47, total: 37171.47, net_premium: 0}
+
+  - id: zerodha_nfo_016_20261027_1602
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130}
+    expected: {span: 189419, exposure: 49731.76, total: 239150.76, net_premium: 0}
+
+  - id: zerodha_nfo_017_20261027_1602
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 16:02
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0}
+
+  - id: zerodha_nfo_022_20261027_1603
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500}
+    expected: {span: 96310, exposure: 21031.5, total: 117341.5, net_premium: -24400}
+
+  - id: zerodha_nfo_023_20261027_1603
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50}
+    expected: {span: 83974.5, exposure: 19635, total: 103609.5, net_premium: -19662.5}
+
+  - id: zerodha_nfo_024_20261027_1603
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475}
+    expected: {span: 97252, exposure: 19883.5, total: 117135.5, net_premium: -18335}
+
+  - id: zerodha_nfo_025_20261027_1603
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-27 16:03
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650}
+    expected: {span: 108979, exposure: 15653.14, total: 124632.14, net_premium: -46358}
+
+  - id: angelone_nfo_001_20261027_1604
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-27 16:04
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 168290.1, exposure: 32620.02, total: 200910.12}}
+    expected: {span: 168290.1, exposure: 32620.02, total: 200910.12, net_premium: -41148, benefit: 0}
+
+  - id: angelone_nfo_002_20261027_1605
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 16:05
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+    expected: {span: 138763.3, exposure: 29758.82, total: 168522.12, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261027_1605
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 16:05
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137657, exposure: 29758.82, total: 167415.82}}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85965, exposure: 21122.5, total: 107087.5}}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+    expected: {span: 147633.2, exposure: 29579.16, total: 177212.36, net_premium: -31866.25, benefit: 0}
+
+  - id: angelone_nfo_006_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 31866.25, benefit: 0}
+
+  - id: angelone_nfo_007a_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007a: Sold index option well beyond 10% out of the money (15%): deep-OTM exposure 3%"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 26200, side: sell, qty: 65, expected: {span: 23897.9, exposure: 44368.74, total: 68266.64}}
+    expected: {span: 23897.9, exposure: 44368.74, total: 68266.64, net_premium: -16.25, benefit: 0}
+
+  - id: angelone_nfo_007b_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007b: Sold index option inside 10% out of the money (5%): normal exposure 2%"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23900, side: sell, qty: 65, expected: {span: 78504.4, exposure: 29579.16, total: 108083.56}}
+    expected: {span: 78504.4, exposure: 29579.16, total: 108083.56, net_premium: -4121, benefit: 0}
+
+  - id: angelone_nfo_008_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360745.45, exposure: 73947.9, total: 434693.35}}
+    expected: {span: 360745.45, exposure: 73947.9, total: 434693.35, net_premium: -128991.85, benefit: 0}
+
+  - id: angelone_nfo_009a_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500, expected: {span: 855, exposure: 31547.25, total: 32402.25}}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_009b_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500, expected: {span: 19105, exposure: 21031.5, total: 40136.5}}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_010_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65, expected: {span: 131453.4, exposure: 29579.16, total: 161032.56}}
+    expected: {span: 148933.2, exposure: 59158.32, total: 208091.52, net_premium: -54395.25, benefit: 130153.4}
+
+  - id: angelone_nfo_011_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22950, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 14071.85, exposure: 29579.16, total: 43651.01, net_premium: -7637.5, benefit: 133561.35}
+
+  - id: angelone_nfo_012_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 147633.2, exposure: 29579.16, total: 177212.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 15410.62, exposure: 29579.16, total: 44989.78, net_premium: 16165.5, benefit: 132222.58}
+
+  - id: angelone_nfo_013_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 8594.3, exposure: 29758.82, total: 38353.12, net_premium: 22529, benefit: 130169}
+
+  - id: angelone_nfo_014_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23050, side: sell, qty: 65, expected: {span: 127761.4, exposure: 29579.16, total: 157340.56}}
+    expected: {span: 139313.2, exposure: 59337.98, total: 198651.18, net_premium: -21001.5, benefit: 127211.5}
+
+  - id: angelone_nfo_015_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138581.95, exposure: 29959.41, total: 168541.36}}
+    expected: {span: 27184.95, exposure: 9986.47, total: 37171.42, net_premium: 0, benefit: 299892.06}
+
+  - id: angelone_nfo_016_20261027_1606
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416289.9, exposure: 89276.46, total: 505566.36}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277163.9, exposure: 59918.82, total: 337082.72}}
+    expected: {span: 189419.1, exposure: 49731.76, total: 239150.86, net_premium: 0, benefit: 603498.22}
+
+  - id: angelone_nfo_017_20261027_1607
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138763.3, exposure: 29758.82, total: 168522.12}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 151808.7, exposure: 32863.56, total: 184672.26}}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_022_20261027_1607
+    broker: angelone
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500, expected: {span: 96310, exposure: 21031.5, total: 117341.5}}
+    expected: {span: 96310, exposure: 21031.5, total: 117341.5, net_premium: -24400, benefit: 0}
+
+  - id: angelone_nfo_023_20261027_1607
+    broker: angelone
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50, expected: {span: 83974, exposure: 19634.65, total: 103608.65}}
+    expected: {span: 83974, exposure: 19634.65, total: 103608.65, net_premium: -19662.5, benefit: 0}
+
+  - id: angelone_nfo_024_20261027_1607
+    broker: angelone
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475, expected: {span: 97251.5, exposure: 19883.5, total: 117135}}
+    expected: {span: 97251.5, exposure: 19883.5, total: 117135, net_premium: -18335, benefit: 0}
+
+  - id: angelone_nfo_025_20261027_1607
+    broker: angelone
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650, expected: {span: 108979, exposure: 15653.14, total: 124632.14}}
+    expected: {span: 108979, exposure: 15653.14, total: 124632.14, net_premium: -46358, benefit: 0}
+
+  - id: zerodha_nfo_002_20261027_1605
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-27 16:05
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+    expected: {span: 138763, exposure: 29758.82, total: 168521.82}
+
+  - id: zerodha_nfo_003_20261027_1605
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-27 16:05
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 137657, exposure: 29758.82, total: 167415.82}
+
+  - id: zerodha_nfo_004_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500}
+    expected: {span: 85965, exposure: 21122.5, total: 107087.5}
+
+  - id: zerodha_nfo_006_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 0, exposure: 0, total: 0}
+
+  - id: zerodha_nfo_009a_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1700, side: sell, qty: 500}
+    expected: {span: 855, exposure: 31547.25, total: 32402.25, net_premium: -25}
+
+  - id: zerodha_nfo_009b_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1450, side: sell, qty: 500}
+    expected: {span: 19105, exposure: 21031.5, total: 40136.5, net_premium: -25}
+
+  - id: zerodha_nfo_013_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 8594, exposure: 29758.82, total: 38352.82}
+
+  - id: zerodha_nfo_015_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 27185, exposure: 9986.47, total: 37171.47}
+
+  - id: zerodha_nfo_016_20261027_1606
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-27 16:06
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130}
+    expected: {span: 189419, exposure: 49731.76, total: 239150.76}
+
+  - id: zerodha_nfo_017_20261027_1607
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 290572, exposure: 62622.38, total: 353194.38}
+
+  - id: zerodha_nfo_022_20261027_1607
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500}
+    expected: {span: 96310, exposure: 21031.5, total: 117341.5, net_premium: -24400}
+
+  - id: zerodha_nfo_023_20261027_1607
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50}
+    expected: {span: 83974.5, exposure: 19635, total: 103609.5, net_premium: -19662.5}
+
+  - id: zerodha_nfo_024_20261027_1607
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475}
+    expected: {span: 97252, exposure: 19883.5, total: 117135.5, net_premium: -18335}
+
+  - id: zerodha_nfo_025_20261027_1607
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-27 16:07
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650}
+    expected: {span: 108979, exposure: 15653.14, total: 124632.14, net_premium: -46358}
+
+  - id: angelone_nfo_022_20261028_1147
+    broker: angelone
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 11:47
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500, expected: {span: 93245, exposure: 20933.85, total: 114178.85}}
+    expected: {span: 93245, exposure: 20933.85, total: 114178.85, net_premium: -22675, benefit: 0}
+
+  - id: angelone_nfo_023_20261028_1147
+    broker: angelone
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 11:47
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50, expected: {span: 89716, exposure: 20037.62, total: 109753.62}}
+    expected: {span: 89716, exposure: 20037.62, total: 109753.62, net_premium: -19585, benefit: 0}
+
+  - id: zerodha_nfo_022_20261028_1147
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 11:47
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500}
+    expected: {span: 93245, exposure: 20933.5, total: 114178.5, net_premium: -22675}
+
+  - id: zerodha_nfo_023_20261028_1147
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 11:47
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50}
+    expected: {span: 89716, exposure: 20037.5, total: 109753.5, net_premium: -19585}
+
+  - id: angelone_nfo_001_20261028_1218
+    broker: angelone
+    source: brokercheck
+    what: "NFO-001: Sold index option, near the money (example row with real figures)"
+    captured_at: 2026-10-28 12:18
+    legs:
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: CE, strike: 54100, side: sell, qty: 30, expected: {span: 155740.5, exposure: 32384.94, total: 188125.44}}
+    expected: {span: 155740.5, exposure: 32384.94, total: 188125.44, net_premium: -33772.5, benefit: 0}
+
+  - id: angelone_nfo_002_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138726.9, exposure: 29696.94, total: 168423.84}}
+    expected: {span: 138726.9, exposure: 29696.94, total: 168423.84, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_003_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 137611.5, exposure: 29696.94, total: 167308.44}}
+    expected: {span: 137611.5, exposure: 29696.94, total: 167308.44, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_004_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500, expected: {span: 85555, exposure: 21136.5, total: 106691.5}}
+    expected: {span: 85555, exposure: 21136.5, total: 106691.5, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_005_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-005: Sold index option, at the money"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 144278.55, exposure: 29574.68, total: 173853.23}}
+    expected: {span: 144278.55, exposure: 29574.68, total: 173853.23, net_premium: -28333.5, benefit: 0}
+
+  - id: angelone_nfo_006_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 0, exposure: 0, total: 0, net_premium: 28333.5, benefit: 0}
+
+  - id: angelone_nfo_007a_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007a: Sold index option well beyond 10% out of the money (15%): deep-OTM exposure 3%"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 26200, side: sell, qty: 65, expected: {span: 23601.5, exposure: 44362.01, total: 67963.51}}
+    expected: {span: 23601.5, exposure: 44362.01, total: 67963.51, net_premium: -22.75, benefit: 0}
+
+  - id: angelone_nfo_007b_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-007b: Sold index option inside 10% out of the money (5%): normal exposure 2%"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23900, side: sell, qty: 65, expected: {span: 77089.35, exposure: 29574.68, total: 106664.03}}
+    expected: {span: 77089.35, exposure: 29574.68, total: 106664.03, net_premium: -3185, benefit: 0}
+
+  - id: angelone_nfo_008_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-008: Sold index option expiring in more than 9 months: exposure 5%"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2027-09-28, type: CE, strike: 22500, side: sell, qty: 65, expected: {span: 360316.45, exposure: 73936.69, total: 434253.14}}
+    expected: {span: 360316.45, exposure: 73936.69, total: 434253.14, net_premium: -128426.35, benefit: 0}
+
+  - id: angelone_nfo_009a_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1680, side: sell, qty: 500, expected: {span: 970, exposure: 31400.78, total: 32370.78}}
+    expected: {span: 970, exposure: 31400.78, total: 32370.78, net_premium: -25, benefit: 0}
+
+  - id: angelone_nfo_009b_20261028_1219
+    broker: angelone
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1440, side: sell, qty: 500, expected: {span: 19840, exposure: 20933.85, total: 40773.85}}
+    expected: {span: 19840, exposure: 20933.85, total: 40773.85, net_premium: -500, benefit: 0}
+
+  - id: angelone_nfo_010_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-010: Short straddle: partial SPAN benefit"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 144278.55, exposure: 29574.68, total: 173853.23}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: sell, qty: 65, expected: {span: 131745.25, exposure: 29574.68, total: 161319.93}}
+    expected: {span: 145480.4, exposure: 59149.35, total: 204629.75, net_premium: -50560.25, benefit: 130543.41}
+
+  - id: angelone_nfo_011_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-011: Option spread: bought call caps the loss"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 144278.55, exposure: 29574.68, total: 173853.23}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22950, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 13618.15, exposure: 29574.68, total: 43192.83, net_premium: -7146.75, benefit: 130660.4}
+
+  - id: angelone_nfo_012_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-012: Option calendar spread"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: sell, qty: 65, expected: {span: 144278.55, exposure: 29574.68, total: 173853.23}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: CE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 14081.24, exposure: 29574.68, total: 43655.92, net_premium: 16854.5, benefit: 130197.31}
+
+  - id: angelone_nfo_013_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138726.9, exposure: 29696.94, total: 168423.84}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65, expected: {span: 0, exposure: 0, total: 0}}
+    expected: {span: 8115.25, exposure: 29696.94, total: 37812.19, net_premium: 22226.75, benefit: 130611.65}
+
+  - id: angelone_nfo_014_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-014: Covered call"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138726.9, exposure: 29696.94, total: 168423.84}}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 23050, side: sell, qty: 65, expected: {span: 125108.1, exposure: 29574.68, total: 154682.78}}
+    expected: {span: 138726.9, exposure: 59271.62, total: 197998.52, net_premium: -18287.75, benefit: 125108.1}
+
+  - id: angelone_nfo_015_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138726.9, exposure: 29696.94, total: 168423.84}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65, expected: {span: 138544.25, exposure: 29898.05, total: 168442.3}}
+    expected: {span: 27257.75, exposure: 9966.02, total: 37223.77, net_premium: 0, benefit: 299642.37}
+
+  - id: angelone_nfo_016_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195, expected: {span: 416180.7, exposure: 89090.82, total: 505271.52}}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130, expected: {span: 277088.5, exposure: 59796.1, total: 336884.6}}
+    expected: {span: 189495.8, exposure: 49628.97, total: 239124.77, net_premium: 0, benefit: 603031.35}
+
+  - id: angelone_nfo_017_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65, expected: {span: 138726.9, exposure: 29696.94, total: 168423.84}}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30, expected: {span: 150687.3, exposure: 32666.88, total: 183354.18}}
+    expected: {span: 289414.2, exposure: 62363.82, total: 351778.02, net_premium: 0, benefit: 0}
+
+  - id: angelone_nfo_022_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500, expected: {span: 93245, exposure: 20933.85, total: 114178.85}}
+    expected: {span: 93245, exposure: 20933.85, total: 114178.85, net_premium: -22675, benefit: 0}
+
+  - id: angelone_nfo_023_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50, expected: {span: 89716, exposure: 20037.62, total: 109753.62}}
+    expected: {span: 89716, exposure: 20037.62, total: 109753.62, net_premium: -19585, benefit: 0}
+
+  - id: angelone_nfo_024_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475, expected: {span: 108233.5, exposure: 20315.75, total: 128549.25}}
+    expected: {span: 108233.5, exposure: 20315.75, total: 128549.25, net_premium: -22443.75, benefit: 0}
+
+  - id: angelone_nfo_025_20261028_1220
+    broker: angelone
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650, expected: {span: 105293.5, exposure: 15474.55, total: 120768.05}}
+    expected: {span: 105293.5, exposure: 15474.55, total: 120768.05, net_premium: -43647.5, benefit: 0}
+
+  - id: zerodha_nfo_002_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-002: Bought index futures"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+    expected: {span: 138727, exposure: 29696.94, total: 168423.94}
+
+  - id: zerodha_nfo_003_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-003: Sold index futures"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 137612, exposure: 29696.94, total: 167308.94}
+
+  - id: zerodha_nfo_004_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-004: Bought stock futures (exposure from NSE exposure file)"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 500}
+    expected: {span: 85555, exposure: 21136.5, total: 106691.5}
+
+  - id: zerodha_nfo_006_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-006: Bought index option: premium only"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: CE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 0, exposure: 0, total: 0}
+
+  - id: zerodha_nfo_009a_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009a: Sold stock option well beyond 30% out of the money (40%): OTM row rate"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1680, side: sell, qty: 500}
+    expected: {span: 970, exposure: 31400.25, total: 32370.25, net_premium: -25}
+
+  - id: zerodha_nfo_009b_20261028_1219
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-009b: Sold stock option inside 30% out of the money (20%): normal (OTH) rate"
+    captured_at: 2026-10-28 12:19
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1440, side: sell, qty: 500}
+    expected: {span: 19840, exposure: 20933.5, total: 40773.5, net_premium: -500}
+
+  - id: zerodha_nfo_013_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-013: Protected futures"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-11-23, type: PE, strike: 22750, side: buy, qty: 65}
+    expected: {span: 8115.25, exposure: 29696.94, total: 37812.19}
+
+  - id: zerodha_nfo_015_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-015: Futures calendar spread, equal lots: one-third rule"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 65}
+    expected: {span: 27258, exposure: 9966.02, total: 37224.02}
+
+  - id: zerodha_nfo_016_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-016: Futures calendar spread, unequal lots"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 195}
+      - {symbol: NIFTY, expiry: 2026-12-29, type: FUT, strike: null, side: sell, qty: 130}
+    expected: {span: 189496, exposure: 49628.97, total: 239124.97}
+
+  - id: zerodha_nfo_017_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-017: Different underlyings: no offset"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: NIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: buy, qty: 65}
+      - {symbol: BANKNIFTY, expiry: 2026-11-23, type: FUT, strike: null, side: sell, qty: 30}
+    expected: {span: 289414, exposure: 62363.82, total: 351777.82}
+
+  - id: zerodha_nfo_022_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-022: Short stock call, stock down on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: RELIANCE, expiry: 2026-11-23, type: CE, strike: 1200, side: sell, qty: 500}
+    expected: {span: 93245, exposure: 20933.5, total: 114178.5, net_premium: -22675}
+
+  - id: zerodha_nfo_023_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-023: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: MARUTI, expiry: 2026-11-23, type: CE, strike: 11300, side: sell, qty: 50}
+    expected: {span: 89716, exposure: 20037.5, total: 109753.5, net_premium: -19585}
+
+  - id: zerodha_nfo_024_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-024: Short stock call, stock up on the day: exposure on the previous close, not the spot"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: CDSL, expiry: 2026-11-23, type: CE, strike: 1220, side: sell, qty: 475}
+    expected: {span: 108233.75, exposure: 20315.75, total: 128549.5, net_premium: -22443.75}
+
+  - id: zerodha_nfo_025_20261028_1220
+    broker: zerodha
+    source: brokercheck
+    what: "NFO-025: Short stock call (in the money), stock down on the day: exposure on the previous close"
+    captured_at: 2026-10-28 12:20
+    legs:
+      - {symbol: HDFCBANK, expiry: 2026-11-23, type: CE, strike: 620, side: sell, qty: 650}
+    expected: {span: 105293.5, exposure: 15474.55, total: 120768.05, net_premium: -43647.5}

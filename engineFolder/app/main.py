@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, fetcher, holidays, readiness, segments, uploads
+from . import audit, auth, backup, config, db, fetcher, holidays, margin as margin_mod, readiness, segments, uploads, validation
 from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
@@ -369,7 +369,9 @@ async def readiness_overview(request, user):
     def work():
         return {"segments": readiness.readiness(), "basis": readiness.basis_settings(),
                 "segment_names": {k: segments.SEGMENTS[k]["name"] for k in readiness.ALL_SEGMENTS},
-                "active": fetcher.active_run(), "can_edit": user["role"] == "superadmin"}
+                "active": fetcher.active_run(), "can_edit": user["role"] == "superadmin",
+                "validation": {seg: {k: v for k, v in validation.status(seg).items() if k != "latest"} |
+                               {"latest": validation.status(seg)["latest"]} for seg in validation.SEGMENTS}}
     return ok(await run_in_threadpool(work))
 
 
@@ -396,6 +398,45 @@ async def snapshot_get(request, user):
     if not s:
         return err("Snapshot not found", 404)
     return ok({"snapshot": s})
+
+
+# ---------------------------------------------------------------- margins (Stage 3, public)
+async def margin_api(request):
+    ip = client_ip(request)
+    if not margin_mod.limiter.allow(ip):
+        return err("Too many requests - wait a minute", 429)
+    b = await body_json(request)
+    try:
+        res = await run_in_threadpool(margin_mod.margin, str(b.get("segment") or "NFO").upper(), b.get("positions"))
+    except margin_mod.MarginError as e:
+        return err(str(e))
+    except Exception as e:                       # never leak internals on the public endpoint
+        print(f"margin error: {type(e).__name__}: {e}")
+        return err("Couldn't work out the margin for this basket", 500)
+    return ok(res)
+
+
+# ---------------------------------------------------------------- validation against brokers (Stage 3)
+@endpoint("admin", "superadmin")
+async def validation_overview(request, user):
+    seg = request.query_params.get("segment", "NFO").upper()
+    def work():
+        st = validation.status(seg)
+        vid = request.query_params.get("id")
+        report = validation.get(int(vid)) if vid else (validation.latest(seg, with_report=True) if st["latest"] else None)
+        return {"segment": seg, "status": st, "history": validation.history(seg), "report": report,
+                "active": fetcher.active_run()}
+    return ok(await run_in_threadpool(work))
+
+
+@endpoint("admin", "superadmin")
+async def validation_run(request, user):
+    b = await body_json(request)
+    seg = str(b.get("segment") or "NFO").upper()
+    if seg not in validation.SEGMENTS:
+        return err("No broker baskets for this segment yet")
+    run = await run_in_threadpool(fetcher.create_run, "validate", user["username"], [seg], None, client_ip(request))
+    return ok({"run": run}, 202)
 
 
 # ---------------------------------------------------------------- holiday calendar
@@ -534,6 +575,17 @@ async def job_calendar_proposal(request, user):
 
 
 @endpoint(fetcher_job=True)
+async def job_validation(request, user):
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running" or run["trigger"] != "validate":
+        return err("Not a running validation", 409)
+    b = await body_json(request)
+    v = await run_in_threadpool(validation.record, rid, str(b.get("segment", "")).upper(), b.get("report"))
+    return ok({"validation": v}, 201)
+
+
+@endpoint(fetcher_job=True)
 async def job_build_inputs(request, user):
     return ok(await run_in_threadpool(readiness.build_inputs, request.query_params.get("segment", "").upper()))
 
@@ -655,6 +707,10 @@ routes = [
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
     Route("/api/fetcher/build/inputs", job_build_inputs),
     Route("/api/fetcher/calendar", job_calendar),
+    Route("/api/fetcher/runs/{rid:int}/validation", job_validation, methods=["POST"]),
+    Route("/api/admin/validation", validation_overview),
+    Route("/api/margin", margin_api, methods=["POST"]),
+    Route("/api/admin/validation/run", validation_run, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/calendar-proposal", job_calendar_proposal, methods=["POST"]),
     Route("/api/admin/calendar", calendar_overview),
     Route("/api/admin/calendar/day", calendar_day, methods=["PUT", "DELETE"]),
