@@ -181,9 +181,23 @@
             <strong id="hcYear"></strong><button type="button" class="secondary small" id="hcNext" aria-label="Next year">›</button></div>
           <button type="button" class="small" id="hcImport">Import from exchanges</button>
         </div>
-        <p class="hint hidden" id="hcReadOnly">Only the SuperAdmin can approve imports or change days.</p>
+        <div class="hc-tabs" id="hcTabs" role="tablist"></div>
         <div id="hcWarnings"></div>
-        <div id="hcProposals"></div>
+        <div id="hcProposal"></div>
+        <form class="hc-form" id="hcForm" autocomplete="off">
+          <div class="hc-form-title">Add, change or remove a day <span class="hint">· tap a day below to fill this in</span></div>
+          <div class="hc-fields">
+            <label>Exchange<select id="hcfEx"></select></label>
+            <label>Date<input type="date" id="hcfDay" required></label>
+            <label>Status<select id="hcfKind"></select></label>
+            <label class="grow">Occasion<input type="text" id="hcfDesc" maxlength="120" placeholder="e.g. Diwali-Balipratipada"></label>
+          </div>
+          <div class="hc-form-actions">
+            <button type="submit" class="small" id="hcfSave">Save day</button>
+            <button type="button" class="secondary small danger-text" id="hcfRemove">Remove day</button>
+          </div>
+        </form>
+        <p class="hint hidden" id="hcReadOnly">Only the SuperAdmin can approve imports or change days.</p>
         <div id="hcList"></div>
       </div>
     </div>

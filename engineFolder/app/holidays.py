@@ -11,6 +11,7 @@ Kinds:
   evening_closed    MCX: evening session closed (a trading day)
   special_session   trading on a day that is normally closed (Muhurat Sunday, a Saturday session)
 """
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 
@@ -212,8 +213,32 @@ def sources():
     return s
 
 
+def _pkey(exchange, year):
+    return f"calendar_proposal:{exchange}:{int(year)}"
+
+
+def _diff(exchange, year, found):
+    current = {e["day"]: e for e in entries(year, exchange)}
+    new = {e["day"]: e for e in found}
+    return {"add": [e for d, e in sorted(new.items()) if d not in current],
+            "change": [dict(e, was=current[d]["kind"]) for d, e in sorted(new.items())
+                       if d in current and current[d]["kind"] != e["kind"]],
+            "missing": [current[d] for d in sorted(current) if d not in new and current[d]["source"] != "manual"]}
+
+
 def proposals():
-    return _db().get_setting("calendar_proposals", {}) or {}
+    """Imports waiting for review, with the difference worked out against the days as they are now."""
+    db = _db()
+    rows = db.query("SELECT key, value FROM settings WHERE key LIKE 'calendar_proposal:%' ORDER BY key")
+    out = {}
+    for r in rows:
+        try:
+            p = json.loads(r["value"])
+        except Exception:
+            continue
+        p["diff"] = _diff(p["exchange"], p["year"], p.get("found") or [])
+        out[f"{p['exchange']}:{p['year']}"] = p
+    return out
 
 
 def _check(exchange, day, kind):
@@ -271,37 +296,38 @@ def save_proposal(run_id, exchange, year, found, source_url, error=None):
             d = _check(exchange, e.get("day"), e.get("kind", "closed"))
         except ValueError:
             continue
+        kind = e.get("kind", "closed")
+        if d.weekday() >= 5 and kind != "special_session":
+            continue                          # a holiday on a Saturday / Sunday changes nothing
         if d.year == int(year):
             clean.append({"day": d.isoformat(), "kind": e.get("kind", "closed"), "description": str(e.get("description") or "")[:120]})
     db = _db()
-    p = proposals()
-    current = {e["day"]: e for e in entries(year, exchange)}
-    new = {e["day"]: e for e in clean}
-    diff = {"add": [e for d, e in new.items() if d not in current],
-            "change": [dict(e, was=current[d]["kind"]) for d, e in new.items() if d in current and current[d]["kind"] != e["kind"]],
-            "missing": [current[d] for d in current if d not in new and current[d]["source"] != "manual"]}
-    p[f"{exchange}:{year}"] = {"exchange": exchange, "year": int(year), "found": clean, "diff": diff, "source": source_url,
-                               "error": error, "fetched_at": iso(), "run_id": run_id}
-    db.set_setting("calendar_proposals", p)
+    diff = _diff(exchange, year, clean)
+    prop = {"exchange": exchange, "year": int(year), "found": clean, "source": source_url,
+            "error": error, "fetched_at": iso(), "run_id": run_id}
+    db.set_setting(_pkey(exchange, year), prop)
     audit.log("auto-fetcher", "calendar_import_fetched", {"exchange": exchange, "year": year, "found": len(clean),
                                                           "add": len(diff["add"]), "change": len(diff["change"]),
                                                           "error": error, "source": source_url})
-    return p[f"{exchange}:{year}"]
+    return dict(prop, diff=diff)
+
+
+def _drop(exchange, year):
+    db = _db()
+    with db.tx() as c:
+        c.execute("DELETE FROM settings WHERE key = ?", (_pkey(exchange, year),))
 
 
 def approve(actor, exchange, year, ip=None):
     """Apply an import: add and change what it found; days only the old import had are left for review."""
     from . import audit
-    key = f"{exchange}:{int(year)}"
-    p = proposals()
-    prop = p.get(key)
+    prop = proposals().get(f"{exchange}:{int(year)}")
     if not prop or prop.get("error") and not prop.get("found"):
         raise LookupError("Nothing to approve for that exchange and year")
+    _drop(exchange, year)                     # first, so a second tap finds nothing to approve
     src = f"import:{prop.get('source') or ''}"[:200]
     for e in prop["diff"]["add"] + prop["diff"]["change"]:
         set_day(actor, exchange, e["day"], e["kind"], e.get("description", ""), ip, source=src)
-    p.pop(key, None)
-    _db().set_setting("calendar_proposals", p)
     audit.log(actor["username"], "calendar_import_approved", {"exchange": exchange, "year": int(year),
                                                               "added": len(prop["diff"]["add"]),
                                                               "changed": len(prop["diff"]["change"])}, ip)
@@ -310,10 +336,9 @@ def approve(actor, exchange, year, ip=None):
 
 def discard(actor, exchange, year, ip=None):
     from . import audit
-    p = proposals()
-    if p.pop(f"{exchange}:{int(year)}", None) is None:
+    if f"{exchange}:{int(year)}" not in proposals():
         raise LookupError("Nothing to discard")
-    _db().set_setting("calendar_proposals", p)
+    _drop(exchange, year)
     audit.log(actor["username"], "calendar_import_discarded", {"exchange": exchange, "year": int(year)}, ip)
 
 
@@ -346,7 +371,8 @@ def overview(year):
     return {"year": int(year), "exchanges": {ex: {"name": v["name"], "segments": v["segments"],
                                                   "days": [r for r in rows if r["exchange"] == ex],
                                                   "source": sources()[ex]} for ex, v in EXCHANGES.items()},
-            "proposals": [p for k, p in proposals().items() if p["year"] == int(year)],
+            "proposals": [p for k, p in proposals().items() if p["year"] == int(year)
+                          and (p["diff"]["add"] or p["diff"]["change"] or p.get("error"))],
             "kinds": KIND_NAMES, "warnings": warnings()}
 
 

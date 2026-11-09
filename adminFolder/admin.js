@@ -495,10 +495,12 @@
   }
 
   // ------------------------------------------------------------ holiday calendar
-  let hc = null, hcYear = null, hcTimer = null;
+  let hc = null, hcYear = null, hcTimer = null, hcEx = "NSE", hcBusy = false;
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const HC_SHORT = { NSE: "NSE equity & F&O", NSE_CD: "NSE currency", BSE: "BSE", MCX: "MCX" };
   const kindPill = k => pill(hc.kinds[k] || k, { closed: "bad", morning_closed: "warn", evening_closed: "warn", special_session: "ok" }[k] || "");
   const dayLabel = d => { const x = new Date(d + "T00:00:00"); return `${fmtDate(d.replace(/-/g, ""))} · ${DOW[x.getDay()]}`; };
+  const host = u => { try { return new URL(u).hostname; } catch (e) { return u || ""; } };
 
   async function loadHolidays() {
     clearTimeout(hcTimer);
@@ -507,100 +509,128 @@
     $("#hcYear").textContent = hcYear;
     $("#hcImport").disabled = !!hc.active;
     $("#hcReadOnly").classList.toggle("hidden", hc.can_edit);
-    const warn = $("#hcWarnings"); warn.textContent = "";
-    for (const w of hc.warnings) warn.append(el("p", { class: "rd-note " + (w.level === "bad" ? "bad" : "warn") }, w.text));
-    if (hc.active) {
-      warn.append(el("p", { class: "rd-note warn" }, `Run #${hc.active.id} (${hc.active.trigger}) is in progress — this page refreshes when it finishes.`));
-      hcTimer = setTimeout(loadHolidays, 8000);
+    $("#hcForm").classList.toggle("hidden", !hc.can_edit);
+    if (!$("#hcfEx").options.length) {
+      for (const [code] of Object.entries(hc.exchanges)) $("#hcfEx").append(el("option", { value: code }, HC_SHORT[code] || code));
+      for (const [k, v] of Object.entries(hc.kinds)) $("#hcfKind").append(el("option", { value: k }, v));
     }
+    $("#hcfDay").min = `${hcYear}-01-01`; $("#hcfDay").max = `${hcYear}-12-31`;
+    if (hc.active) hcTimer = setTimeout(loadHolidays, 8000);
+    renderHc();
+  }
 
-    // imports waiting for review
-    const pr = $("#hcProposals"); pr.textContent = "";
-    for (const p of hc.proposals) {
-      const ex = hc.exchanges[p.exchange];
-      const box = el("div", { class: "rd-seg hc-prop" });
-      const n = p.diff.add.length + p.diff.change.length;
+  function renderHc() {
+    const pending = new Set(hc.proposals.map(p => p.exchange));
+    const tabs = $("#hcTabs"); tabs.textContent = "";
+    for (const [code, ex] of Object.entries(hc.exchanges)) {
+      const b = el("button", { type: "button", role: "tab", class: "hc-tab" + (code === hcEx ? " active" : ""), "aria-selected": String(code === hcEx) },
+        HC_SHORT[code] || code, el("span", { class: "hc-count" }, String(ex.days.length)),
+        pending.has(code) ? el("span", { class: "hc-dot", title: "Import waiting for review" }) : null);
+      b.addEventListener("click", () => { hcEx = code; $("#hcfEx").value = code; renderHc(); });
+      tabs.append(b);
+    }
+    const ex = hc.exchanges[hcEx];
+    if (!$("#hcfEx").dataset.touched) $("#hcfEx").value = hcEx;
+
+    const warn = $("#hcWarnings"); warn.textContent = "";
+    if (hc.active) warn.append(el("p", { class: "rd-note warn" }, `Run #${hc.active.id} (${hc.active.trigger}) is in progress — this page refreshes when it finishes.`));
+    for (const w of hc.warnings.filter(w => w.exchange === hcEx)) warn.append(el("p", { class: "rd-note " + (w.level === "bad" ? "bad" : "warn") }, w.text));
+
+    // import waiting for review (this exchange)
+    const pr = $("#hcProposal"); pr.textContent = "";
+    const p = hc.proposals.find(x => x.exchange === hcEx);
+    if (p) {
+      const n = p.diff.add.length + p.diff.change.length, failed = p.error && !p.found.length;
+      const box = el("div", { class: "hc-prop" });
       box.append(el("div", { class: "rd-head" },
-        el("div", {}, el("div", { class: "rd-name" }, `Import for review · ${ex.name} · ${p.year}`),
-          el("div", { class: "hint" }, `${p.found.length} day${p.found.length === 1 ? "" : "s"} found on ${(() => { try { return new URL(p.source).hostname; } catch (e) { return p.source; } })()} · fetched ${ist(p.fetched_at)}`)),
-        pill(p.error && !p.found.length ? "Import failed" : (n ? `${n} change${n > 1 ? "s" : ""}` : "No changes"), p.error && !p.found.length ? "bad" : (n ? "warn" : "ok"))));
-      if (p.error && !p.found.length) box.append(el("p", { class: "rd-note bad" }, p.error + " — add the days by hand below, or try again later."));
-      const rows = [...p.diff.add.map(e => ["Add", e]), ...p.diff.change.map(e => ["Change", e])];
-      if (rows.length) box.append(el("div", { class: "rd-snaps" }, ...rows.map(([what, e]) => el("div", { class: "hc-row" },
-        el("span", { class: "hc-date" }, dayLabel(e.day)), kindPill(e.kind),
-        el("span", { class: "hc-desc" }, (e.description || "") + (e.was ? ` (was: ${hc.kinds[e.was] || e.was})` : "")),
-        el("span", { class: "hint" }, what)))));
-      if (p.diff.missing.length) box.append(el("p", { class: "rd-note warn" },
-        `Not on the page any more (left as they are): ${p.diff.missing.map(e => e.day).join(", ")}`));
-      if (hc.can_edit) {
-        const acts = el("div", { class: "rd-actions" });
-        if (n) acts.append(el("button", { type: "button", class: "small", onclick: () => decide("approve", p) }, `Approve ${n} change${n > 1 ? "s" : ""}`));
-        acts.append(el("button", { type: "button", class: "secondary small", onclick: () => decide("discard", p) }, "Discard"));
-        box.append(acts);
+        el("div", {}, el("div", { class: "rd-name" }, failed ? "Import failed" : `Import waiting for review: ${n} change${n === 1 ? "" : "s"}`),
+          el("div", { class: "hint" }, `${host(p.source)} · fetched ${ist(p.fetched_at)}`)),
+        hc.can_edit ? el("div", { class: "hc-prop-actions" },
+          n ? el("button", { type: "button", class: "small", onclick: e => decide("approve", p, e.currentTarget) }, "Approve") : null,
+          el("button", { type: "button", class: "secondary small", onclick: e => decide("discard", p, e.currentTarget) }, "Discard")) : null));
+      if (failed) box.append(el("p", { class: "rd-note bad" }, p.error));
+      const rows = [...p.diff.add.map(e => ["New", e]), ...p.diff.change.map(e => ["Changed", e])];
+      if (rows.length) {
+        const det = el("details", { class: "hc-details" }, el("summary", {}, "Show what changes"));
+        det.append(el("div", { class: "hc-table" }, ...rows.map(([what, e]) => el("div", { class: "hc-row" },
+          el("span", { class: "hc-date" }, dayLabel(e.day)), kindPill(e.kind),
+          el("span", { class: "hc-desc" }, (e.description || "") + (e.was ? ` (was: ${hc.kinds[e.was] || e.was})` : "")),
+          el("span", { class: "hint" }, what)))));
+        box.append(det);
       }
       pr.append(box);
     }
 
-    // one list per exchange
+    // the exchange's days
     const list = $("#hcList"); list.textContent = "";
-    for (const [code, ex] of Object.entries(hc.exchanges)) {
-      const box = el("div", { class: "rd-seg" });
-      box.append(el("div", { class: "rd-head" },
-        el("div", {}, el("div", { class: "rd-name" }, ex.name),
-          el("div", { class: "hint" }, `Used for: ${ex.segments.join(", ")} · `,
-            el("a", { href: ex.source.reference, target: "_blank", rel: "noopener" }, "exchange's page"))),
-        pill(`${ex.days.length} day${ex.days.length === 1 ? "" : "s"}`, ex.days.length ? "ok" : "")));
-      const tbl = el("div", { class: "rd-snaps" });
-      if (!ex.days.length) tbl.append(el("div", { class: "hc-row" }, el("span", { class: "hint hc-empty" }, `No ${hcYear} days entered — only weekends count as closed.`)));
-      for (const d of ex.days) {
-        const row = el("div", { class: "hc-row" }, el("span", { class: "hc-date" }, dayLabel(d.day)), kindPill(d.kind),
-          el("span", { class: "hc-desc" }, d.description || "", el("span", { class: "hint" }, d.source === "manual" ? ` · added by ${d.updated_by}` : "")));
-        if (hc.can_edit) row.append(el("button", { type: "button", class: "link", onclick: () => removeDay(code, d) }, "Remove"));
-        tbl.append(row);
-      }
-      box.append(tbl);
-      if (hc.can_edit) {
-        const date = el("input", { type: "date", min: `${hcYear}-01-01`, max: `${hcYear}-12-31` });
-        const kind = el("select", {}, ...Object.entries(hc.kinds).map(([k, v]) => el("option", { value: k }, v)));
-        const desc = el("input", { type: "text", placeholder: "Occasion, e.g. Diwali-Balipratipada", maxlength: "120" });
-        const add = el("button", { type: "button", class: "secondary small" }, "Add / update day");
-        add.addEventListener("click", async () => {
-          if (!date.value) { toast("Pick a date", "bad"); return; }
-          try { await api("/api/admin/calendar/day", { method: "PUT", json: { exchange: code, day: date.value, kind: kind.value, description: desc.value } });
-            toast(`${ex.name}: ${date.value} saved`, "ok"); loadHolidays(); }
-          catch (e) { toast("Couldn't save", "bad", e.message); }
-        });
-        box.append(el("div", { class: "hc-add" }, date, kind, desc, add));
-      }
-      list.append(box);
+    list.append(el("div", { class: "hc-list-head" },
+      el("span", {}, `${ex.name} · used for ${ex.segments.join(", ")}`),
+      el("a", { href: ex.source.reference, target: "_blank", rel: "noopener" }, "Exchange's page ↗")));
+    const tbl = el("div", { class: "hc-table" });
+    if (!ex.days.length) tbl.append(el("div", { class: "hc-row" }, el("span", { class: "hint hc-empty" }, `No ${hcYear} days entered — only weekends count as closed.`)));
+    for (const d of ex.days) {
+      const weekend = [0, 6].includes(new Date(d.day + "T00:00:00").getDay()) && d.kind === "closed";
+      const row = el("div", { class: "hc-row" + (hc.can_edit ? " clickable" : "") + (weekend ? " muted" : "") },
+        el("span", { class: "hc-date" }, dayLabel(d.day)), kindPill(d.kind),
+        el("span", { class: "hc-desc" }, (d.description || "") + (weekend ? " · weekend, closed anyway" : "")),
+        el("span", { class: "hint hc-src" }, d.source === "manual" ? `added by ${d.updated_by}` : "imported"));
+      if (hc.can_edit) row.addEventListener("click", () => {
+        $("#hcfEx").value = hcEx; $("#hcfDay").value = d.day; $("#hcfKind").value = d.kind; $("#hcfDesc").value = d.description || "";
+        $("#hcForm").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      tbl.append(row);
     }
+    list.append(tbl);
   }
 
-  async function decide(action, p) {
-    const ex = hc.exchanges[p.exchange].name;
+  async function decide(action, p, btn) {
+    if (hcBusy) return;
+    const name = HC_SHORT[p.exchange];
     if (action === "approve") {
-      const ok = await dialog({ title: `Apply the ${ex} ${p.year} import?`,
+      const ok = await dialog({ title: `Apply the ${name} ${p.year} import?`,
         message: "The fetcher and the parsers use these days from the next run. Every change is recorded in the audit log.", confirmText: "Approve" });
       if (!ok) return;
     }
+    hcBusy = true; if (btn) btn.disabled = true;
     try { await api(`/api/admin/calendar/${action}`, { method: "POST", json: { exchange: p.exchange, year: p.year } });
-      toast(action === "approve" ? `${ex} ${p.year} updated` : "Import discarded", "ok"); }
+      toast(action === "approve" ? `${name} ${p.year} updated` : "Import discarded", "ok"); }
     catch (e) { toast("Couldn't " + action, "bad", e.message); }
+    hcBusy = false;
     loadHolidays();
   }
 
-  async function removeDay(code, d) {
-    const ok = await dialog({ title: `Remove ${d.day}?`, message: `${hc.exchanges[code].name}: ${d.description || ""}\nThe day counts as a normal day again.`,
-      confirmText: "Remove", danger: true });
+  $("#hcfEx").addEventListener("change", () => { $("#hcfEx").dataset.touched = "1"; });
+  $("#hcForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    if (hcBusy) return;
+    const exch = $("#hcfEx").value, day = $("#hcfDay").value;
+    if (!day) { toast("Pick a date", "bad"); return; }
+    hcBusy = true; $("#hcfSave").disabled = true;
+    try { await api("/api/admin/calendar/day", { method: "PUT", json: { exchange: exch, day, kind: $("#hcfKind").value, description: $("#hcfDesc").value } });
+      toast(`${HC_SHORT[exch]}: ${fmtDate(day.replace(/-/g, ""))} saved`, "ok");
+      hcEx = exch; delete $("#hcfEx").dataset.touched; $("#hcfDay").value = ""; $("#hcfDesc").value = ""; }
+    catch (err) { toast("Couldn't save", "bad", err.message); }
+    hcBusy = false; $("#hcfSave").disabled = false;
+    loadHolidays();
+  });
+  $("#hcfRemove").addEventListener("click", async () => {
+    if (hcBusy) return;
+    const exch = $("#hcfEx").value, day = $("#hcfDay").value;
+    if (!day) { toast("Pick the date to remove", "bad"); return; }
+    const ok = await dialog({ title: `Remove ${fmtDate(day.replace(/-/g, ""))} from ${HC_SHORT[exch]}?`,
+      message: "The day counts as a normal trading day again (weekends stay closed).", confirmText: "Remove", danger: true });
     if (!ok) return;
-    try { await api("/api/admin/calendar/day", { method: "DELETE", json: { exchange: code, day: d.day } }); toast("Removed", "ok"); }
-    catch (e) { toast("Couldn't remove", "bad", e.message); }
+    hcBusy = true;
+    try { await api("/api/admin/calendar/day", { method: "DELETE", json: { exchange: exch, day } });
+      toast("Removed", "ok"); hcEx = exch; $("#hcfDay").value = ""; $("#hcfDesc").value = ""; }
+    catch (err) { toast("Couldn't remove", "bad", err.message); }
+    hcBusy = false;
     loadHolidays();
-  }
-
+  });
   $("#hcPrev").addEventListener("click", () => { hcYear -= 1; loadHolidays(); });
   $("#hcNext").addEventListener("click", () => { hcYear += 1; loadHolidays(); });
   $("#hcImport").addEventListener("click", async () => {
+    $("#hcImport").disabled = true;
     try { const r = await api("/api/admin/calendar/import", { method: "POST", json: {} });
       toast("Import started", "ok", `Run #${r.run.id} reads the exchanges' holiday pages on GitHub. Review the result here — nothing changes until you approve it.`); }
     catch (e) { toast("Couldn't start the import", "bad", e.message); }
