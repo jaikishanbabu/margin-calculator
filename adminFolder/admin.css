@@ -345,3 +345,23 @@ button.link{background:none;border:0;color:var(--primary);font-size:13px;padding
 .v-tr:first-child{border-top:0} .v-tr.head{background:var(--panel);font-weight:600;color:var(--muted)}
 .v-tr span:not(:first-child){text-align:right} .v-tr.off{color:var(--bad);font-weight:600}
 .v-pre{white-space:pre-wrap;font-size:12px;background:var(--panel);padding:8px;border-radius:8px;max-height:240px;overflow:auto}
+
+/* loading states */
+@keyframes mc-spin{to{transform:rotate(360deg)}}
+@keyframes mc-bar{0%{left:-35%;width:35%}60%{left:100%;width:35%}100%{left:100%;width:35%}}
+.spinner{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid var(--primary-18);border-top-color:var(--primary);
+  animation:mc-spin .7s linear infinite;flex-shrink:0}
+.spinner.big{width:34px;height:34px;border-width:3px}
+.top-bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:300;overflow:hidden;opacity:0;transition:opacity .2s;pointer-events:none}
+.top-bar.on{opacity:1}
+.top-bar::before{content:"";position:absolute;top:0;height:100%;background:var(--primary);border-radius:0 2px 2px 0;animation:mc-bar 1.1s ease-in-out infinite}
+.boot{position:fixed;inset:0;z-index:250;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;color:var(--muted);font-size:14px;text-align:center;padding:24px}
+.boot.hidden{display:none}
+.loading-ph{display:flex;align-items:center;justify-content:center;gap:10px;padding:28px 12px;color:var(--muted);font-size:14px}
+td > .loading-ph{padding:22px 8px}
+button.busy{position:relative;color:transparent!important;pointer-events:none}
+button.busy::after{content:"";position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-9px 0 0 -9px;border-radius:50%;
+  border:2px solid currentColor;border-color:rgba(255,255,255,.45);border-top-color:#fff;animation:mc-spin .7s linear infinite}
+button.secondary.busy::after,button.link.busy::after{border-color:var(--primary-18);border-top-color:var(--primary)}
+@media (prefers-reduced-motion:reduce){.spinner,button.busy::after{animation-duration:2s}.top-bar::before{animation:none;left:0;width:100%;opacity:.6}}

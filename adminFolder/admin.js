@@ -79,7 +79,41 @@
     });
   }
 
+  // ------------------------------------------------------------ loading states
+  // a thin bar under the header while any request runs; the button that started a request shows a
+  // spinner; empty lists show a loading placeholder until their data arrives
+  let pending = 0, barTimer = null, armed = null;
+  function barOn() { pending++; if (pending === 1) barTimer = setTimeout(() => $("#topBar").classList.add("on"), 120); }
+  function barOff() { pending = Math.max(0, pending - 1); if (!pending) { clearTimeout(barTimer); $("#topBar").classList.remove("on"); } }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (b && !b.closest("#nav, .hc-tabs, .menu, .dialog-actions") && !b.classList.contains("theme-toggle")) armed = { b, t: Date.now() };
+  }, true);
+  document.addEventListener("submit", e => { const b = e.submitter || e.target.querySelector("button[type=submit]"); if (b) armed = { b, t: Date.now() }; }, true);
+  function busyButton() {
+    if (!armed || Date.now() - armed.t > 1500 || !document.contains(armed.b) || armed.b.classList.contains("busy")) return null;
+    const b = armed.b; armed = null;
+    b.classList.add("busy"); b.setAttribute("aria-busy", "true");
+    return b;
+  }
+  function unbusy(b) { if (b) { b.classList.remove("busy"); b.removeAttribute("aria-busy"); } }
+  function placeholder(target, text = "Loading…", cols = 0) {
+    const node = typeof target === "string" ? $(target) : target;
+    if (!node) return;
+    node.textContent = "";
+    const inner = el("div", { class: "loading-ph" }, el("span", { class: "spinner" }), el("span", {}, text));
+    if (node.tagName === "TBODY") node.append(el("tr", {}, el("td", { colspan: String(cols || 8) }, inner)));
+    else node.append(inner);
+  }
+  const isEmpty = n => !n || !n.children.length || !!n.querySelector(":scope > .loading-ph, :scope > tr > td > .loading-ph");
+
   async function api(path, opts = {}) {
+    const btn = busyButton();
+    barOn();
+    try { return await apiRaw(path, opts); } finally { barOff(); unbusy(btn); }
+  }
+
+  async function apiRaw(path, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (token) headers["Authorization"] = "Bearer " + token;
     if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
@@ -98,16 +132,21 @@
     $("#profile").classList.add("hidden"); document.body.classList.remove("nav-on"); closeMenu(); closeDrawer();
   }
 
+  function bootDone() { $("#bootLoader").classList.add("hidden"); }
   async function start() {
+    const slow = setTimeout(() => { $("#bootText").textContent = "Waking the server… on the free plan this can take up to a minute."; }, 4000);
     try {
       const h = await fetch(API + "/api/health").then(r => r.json());
       $("#envBadge").textContent = h.env || "";
     } catch (_) { $("#envBadge").textContent = "offline"; }
-    if (!token) return logout();
+    clearTimeout(slow);
+    if (!token) { bootDone(); return logout(); }
+    $("#bootText").textContent = "Signing you in…";
     try {
       me = (await api("/api/auth/me")).user;
       if (!me.must_change_password) meta = await api("/api/admin/meta");
-    } catch (e) { return logout(); }
+    } catch (e) { bootDone(); return logout(); }
+    bootDone();
     $("#loginView").classList.add("hidden"); $("#appView").classList.remove("hidden");
     $("#avatarBtn").textContent = (me.username || "?").charAt(0).toUpperCase();
     $("#avatarBtn").setAttribute("aria-label", `Account menu for ${me.username}`);
@@ -292,6 +331,7 @@
   let fx = null, fxViewId = null, fxTimer = null;
 
   async function loadFetcher() {
+    if (isEmpty($("#fxHistory tbody"))) placeholder("#fxHistory tbody", "Loading runs…", 7);
     try { fx = await api("/api/admin/fetcher"); } catch (e) { toast("Couldn't load fetcher", "bad", e.message); return; }
     $("#fxNotConfigured").classList.toggle("hidden", fx.configured);
     const seg = $("#fxSeg");
@@ -327,6 +367,7 @@
   }
 
   async function loadFxRun(id) {
+    if (isEmpty($("#fxProgress"))) placeholder("#fxProgress", "Loading the run…");
     clearTimeout(fxTimer);
     let r;
     try { r = (await api(`/api/admin/fetcher/runs/${id}`)).run; } catch (e) { return; }
@@ -412,6 +453,7 @@
 
   async function loadReady() {
     clearTimeout(rdTimer);
+    if (isEmpty($("#rdList"))) placeholder("#rdList", "Loading each segment's data…");
     try { rd = await api("/api/admin/readiness"); } catch (e) { toast("Couldn't load readiness", "bad", e.message); return; }
     const box = $("#rdList"); box.textContent = "";
     $("#rdReadOnly").classList.toggle("hidden", rd.can_edit);
@@ -505,6 +547,7 @@
   const chip = (t, k) => el("span", { class: "v-chip " + (k || "") }, t);
 
   async function showReport() {
+    if (!vrep) placeholder("#vReport", "Loading the report…");
     try { vrep = (await api("/api/admin/validation?segment=NFO")).report; } catch (e) { toast("Couldn't load the report", "bad", e.message); return; }
     drawReport();
   }
@@ -590,6 +633,7 @@
 
   async function loadHolidays() {
     clearTimeout(hcTimer);
+    if (isEmpty($("#hcList")) || (hc && hc.year !== (hcYear || new Date().getFullYear()))) placeholder("#hcList", "Loading the calendar…");
     hcYear = hcYear || new Date().getFullYear();
     try { hc = await api(`/api/admin/calendar?year=${hcYear}`); } catch (e) { toast("Couldn't load the calendar", "bad", e.message); return; }
     $("#hcYear").textContent = hcYear;
@@ -726,6 +770,7 @@
   // ------------------------------------------------------------ upload log
   $("#logSegment").addEventListener("change", loadLog);
   async function loadLog() {
+    if (isEmpty($("#logTable tbody"))) placeholder("#logTable tbody", "Loading uploads…", 9);
     const seg = $("#logSegment").value;
     const tb = $("#logTable tbody"); tb.textContent = "";
     try {
@@ -762,6 +807,7 @@
 
   // ------------------------------------------------------------ audit
   async function loadAudit() {
+    if (isEmpty($("#auditTable tbody"))) placeholder("#auditTable tbody", "Loading the audit log…", 6);
     const tb = $("#auditTable tbody"); tb.textContent = "";
     try {
       const { entries } = await api("/api/admin/audit?limit=300");
@@ -778,6 +824,7 @@
 
   // ------------------------------------------------------------ backups
   async function loadBackups() {
+    if (isEmpty($("#backupTable tbody"))) placeholder("#backupTable tbody", "Loading backups…", 6);
     const tb = $("#backupTable tbody"); tb.textContent = "";
     try {
       const { runs, status } = await api("/api/admin/backups");
@@ -819,6 +866,7 @@
 
   // ------------------------------------------------------------ users
   async function loadUsers() {
+    if (isEmpty($("#userTable tbody"))) placeholder("#userTable tbody", "Loading admins…", 6);
     const tb = $("#userTable tbody"); tb.textContent = "";
     try {
       const { users } = await api("/api/admin/users");

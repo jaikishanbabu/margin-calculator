@@ -37,6 +37,8 @@
   </div>
 </header>
 
+<div class="top-bar" id="topBar" role="progressbar" aria-label="Loading"></div>
+<div class="boot" id="bootLoader" role="status" aria-live="polite"><span class="spinner big"></span><span id="bootText">Loading…</span></div>
 <main>
   <!-- login -->
   <section id="loginView" class="card narrow hidden">
@@ -169,7 +171,7 @@
         <div class="result warn hidden" id="rdActive"></div>
         <div id="rdList"></div>
       </div>
-      <div class="card" id="rdValidation"></div>
+      <div class="card hidden" id="rdValidation"></div>
     </div>
 
     <div class="tab hidden" id="tab-holidays">
