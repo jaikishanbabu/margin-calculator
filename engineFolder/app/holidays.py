@@ -229,7 +229,7 @@ def _diff(exchange, year, found):
 def proposals():
     """Imports waiting for review, with the difference worked out against the days as they are now."""
     db = _db()
-    rows = db.query("SELECT key, value FROM settings WHERE key LIKE 'calendar_proposal:%' ORDER BY key")
+    rows = db.query("SELECT key, value FROM settings WHERE key LIKE ? ORDER BY key", ("calendar_proposal:%",))
     out = {}
     for r in rows:
         try:
