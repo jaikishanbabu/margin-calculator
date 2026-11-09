@@ -280,3 +280,19 @@ button.danger-btn{background:var(--bad);color:#fff}
 button.link{background:none;border:0;color:var(--primary);font-size:13px;padding:0;height:auto;cursor:pointer}
 .rd-actions{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
 @media (max-width:640px){.rd-snap{grid-template-columns:1fr}.rd-head{flex-direction:column}}
+
+/* holiday calendar */
+.hc-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 4px}
+.hc-years{display:flex;align-items:center;gap:10px}
+.hc-years strong{font:600 18px var(--font-head);color:var(--ink);min-width:48px;text-align:center}
+.hc-row{display:grid;grid-template-columns:150px auto 1fr auto;gap:10px;align-items:center;padding:8px 12px;font-size:13px;border-top:1px solid var(--line)}
+.hc-row:first-child{border-top:0}
+.hc-date{font-weight:600;color:var(--ink);white-space:nowrap}
+.hc-desc{color:var(--muted)}
+.hc-add{display:grid;grid-template-columns:160px 230px 1fr auto;gap:8px;margin-top:10px}
+.hc-add input,.hc-add select{height:36px;font-size:13px}
+.hc-prop{border-color:var(--warn)}
+@media (max-width:640px){.hc-row{grid-template-columns:1fr auto}.hc-desc{grid-column:1/-1}.hc-add{grid-template-columns:1fr}}
+.hc-empty{grid-column:1/-1}
+.rd-head .pill{white-space:nowrap;flex-shrink:0}
+.rd-head > div{min-width:0;overflow-wrap:anywhere}

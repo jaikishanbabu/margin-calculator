@@ -167,7 +167,9 @@
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hidden", t.id !== "tab-" + name));
     if (name !== "fetcher") clearTimeout(fxTimer);
     if (name !== "ready") clearTimeout(rdTimer);
-    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher, ready: loadReady }[name] || (() => {}))();
+    if (name !== "holidays") clearTimeout(hcTimer);
+    ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher, ready: loadReady,
+       holidays: loadHolidays }[name] || (() => {}))();
   }
   $("#nav").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
@@ -277,6 +279,7 @@
     "bse.var": "VaR", "bse.bhavcopy": "Bhavcopy" };
   const BASIS_NAME = { bod: "start-of-day", latest: "latest cycle" };
   function fxName(ref) {
+    if (ref.startsWith("calendar:")) return `Holiday calendar ${ref.split(":")[2]}`;
     if (ref.startsWith("build:")) return `Parsed data · ${BASIS_NAME[ref.split(":")[2]] || ref.split(":")[2]}`;
     const [sid, variant] = ref.split(":");
     let n = SOURCE_NAMES[sid] || sid;
@@ -332,7 +335,7 @@
     $("#fxRunStatus").textContent = "";
     $("#fxRunStatus").append(pill(live ? (r.status === "queued" ? "starting…" : "running") : r.status,
       r.status === "done" ? "ok" : (live ? "warn" : (r.status === "skipped" ? "" : "bad"))));
-    $("#fxRunMeta").textContent = `${{ auto: "Automatic", manual: "Manual", rebuild: "Rebuild (no download)" }[r.trigger] || r.trigger} · ${(r.segments || []).join(", ")} · trading date ${fmtDate(r.trade_date)} · by ${r.requested_by} · started ${ist(r.started_at || r.created_at)}` +
+    $("#fxRunMeta").textContent = `${{ auto: "Automatic", manual: "Manual", rebuild: "Rebuild (no download)", calendar: "Holiday calendar import" }[r.trigger] || r.trigger} · ${(r.segments || []).join(", ")} · trading date ${fmtDate(r.trade_date)} · by ${r.requested_by} · started ${ist(r.started_at || r.created_at)}` +
       (r.finished_at ? ` · finished ${ist(r.finished_at)}` : "") + (r.message ? ` · ${r.message}` : "") +
       (r.status === "queued" ? " · waiting for GitHub to start the job (usually under a minute)" : "");
     const fxDetail = i => {
@@ -351,7 +354,8 @@
       items.forEach(i => c[i.status] = (c[i.status] || 0) + 1);
       const name = (meta && meta.segments[seg]) ? meta.segments[seg].name : seg;
       box.append(el("div", { class: "fx-seg" },
-        el("div", { class: "fx-seg-head" }, el("span", {}, `${name} (${seg})`),
+        el("div", { class: "fx-seg-head" }, el("span", {}, `${name} (${seg})` +
+            ((items[0].trade_date && items[0].trade_date !== r.trade_date) ? ` · for ${fmtDate(items[0].trade_date)}` : "")),
           el("span", { class: "counts" }, Object.entries(c).map(([k, v]) => `${FX_ICON[k] || ""} ${v} ${FX_WORD[k].toLowerCase()}`).join(" · "))),
         ...items.map(i => el("div", { class: "fx-item" },
           el("span", { class: "fx-icon " + (i.status === "built" ? "archived" : i.status), title: FX_WORD[i.status] }, i.status === "running" ? el("span", { class: "spin" }, "⟳") : FX_ICON[i.status]),
@@ -489,6 +493,119 @@
       message: `${snapLine(s)}\n\nFiles used:\n${lines}\n\nRules:\n${rules}\nCode: ${(s.code_version || "").slice(0, 12)}\nSHA-256: ${(s.sha256 || "").slice(0, 16)}… · ${((s.size_bytes || 0) / 1e6).toFixed(1)} MB`,
       confirmText: "Close", cancelText: null });
   }
+
+  // ------------------------------------------------------------ holiday calendar
+  let hc = null, hcYear = null, hcTimer = null;
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const kindPill = k => pill(hc.kinds[k] || k, { closed: "bad", morning_closed: "warn", evening_closed: "warn", special_session: "ok" }[k] || "");
+  const dayLabel = d => { const x = new Date(d + "T00:00:00"); return `${fmtDate(d.replace(/-/g, ""))} · ${DOW[x.getDay()]}`; };
+
+  async function loadHolidays() {
+    clearTimeout(hcTimer);
+    hcYear = hcYear || new Date().getFullYear();
+    try { hc = await api(`/api/admin/calendar?year=${hcYear}`); } catch (e) { toast("Couldn't load the calendar", "bad", e.message); return; }
+    $("#hcYear").textContent = hcYear;
+    $("#hcImport").disabled = !!hc.active;
+    $("#hcReadOnly").classList.toggle("hidden", hc.can_edit);
+    const warn = $("#hcWarnings"); warn.textContent = "";
+    for (const w of hc.warnings) warn.append(el("p", { class: "rd-note " + (w.level === "bad" ? "bad" : "warn") }, w.text));
+    if (hc.active) {
+      warn.append(el("p", { class: "rd-note warn" }, `Run #${hc.active.id} (${hc.active.trigger}) is in progress — this page refreshes when it finishes.`));
+      hcTimer = setTimeout(loadHolidays, 8000);
+    }
+
+    // imports waiting for review
+    const pr = $("#hcProposals"); pr.textContent = "";
+    for (const p of hc.proposals) {
+      const ex = hc.exchanges[p.exchange];
+      const box = el("div", { class: "rd-seg hc-prop" });
+      const n = p.diff.add.length + p.diff.change.length;
+      box.append(el("div", { class: "rd-head" },
+        el("div", {}, el("div", { class: "rd-name" }, `Import for review · ${ex.name} · ${p.year}`),
+          el("div", { class: "hint" }, `${p.found.length} day${p.found.length === 1 ? "" : "s"} found on ${(() => { try { return new URL(p.source).hostname; } catch (e) { return p.source; } })()} · fetched ${ist(p.fetched_at)}`)),
+        pill(p.error && !p.found.length ? "Import failed" : (n ? `${n} change${n > 1 ? "s" : ""}` : "No changes"), p.error && !p.found.length ? "bad" : (n ? "warn" : "ok"))));
+      if (p.error && !p.found.length) box.append(el("p", { class: "rd-note bad" }, p.error + " — add the days by hand below, or try again later."));
+      const rows = [...p.diff.add.map(e => ["Add", e]), ...p.diff.change.map(e => ["Change", e])];
+      if (rows.length) box.append(el("div", { class: "rd-snaps" }, ...rows.map(([what, e]) => el("div", { class: "hc-row" },
+        el("span", { class: "hc-date" }, dayLabel(e.day)), kindPill(e.kind),
+        el("span", { class: "hc-desc" }, (e.description || "") + (e.was ? ` (was: ${hc.kinds[e.was] || e.was})` : "")),
+        el("span", { class: "hint" }, what)))));
+      if (p.diff.missing.length) box.append(el("p", { class: "rd-note warn" },
+        `Not on the page any more (left as they are): ${p.diff.missing.map(e => e.day).join(", ")}`));
+      if (hc.can_edit) {
+        const acts = el("div", { class: "rd-actions" });
+        if (n) acts.append(el("button", { type: "button", class: "small", onclick: () => decide("approve", p) }, `Approve ${n} change${n > 1 ? "s" : ""}`));
+        acts.append(el("button", { type: "button", class: "secondary small", onclick: () => decide("discard", p) }, "Discard"));
+        box.append(acts);
+      }
+      pr.append(box);
+    }
+
+    // one list per exchange
+    const list = $("#hcList"); list.textContent = "";
+    for (const [code, ex] of Object.entries(hc.exchanges)) {
+      const box = el("div", { class: "rd-seg" });
+      box.append(el("div", { class: "rd-head" },
+        el("div", {}, el("div", { class: "rd-name" }, ex.name),
+          el("div", { class: "hint" }, `Used for: ${ex.segments.join(", ")} · `,
+            el("a", { href: ex.source.reference, target: "_blank", rel: "noopener" }, "exchange's page"))),
+        pill(`${ex.days.length} day${ex.days.length === 1 ? "" : "s"}`, ex.days.length ? "ok" : "")));
+      const tbl = el("div", { class: "rd-snaps" });
+      if (!ex.days.length) tbl.append(el("div", { class: "hc-row" }, el("span", { class: "hint hc-empty" }, `No ${hcYear} days entered — only weekends count as closed.`)));
+      for (const d of ex.days) {
+        const row = el("div", { class: "hc-row" }, el("span", { class: "hc-date" }, dayLabel(d.day)), kindPill(d.kind),
+          el("span", { class: "hc-desc" }, d.description || "", el("span", { class: "hint" }, d.source === "manual" ? ` · added by ${d.updated_by}` : "")));
+        if (hc.can_edit) row.append(el("button", { type: "button", class: "link", onclick: () => removeDay(code, d) }, "Remove"));
+        tbl.append(row);
+      }
+      box.append(tbl);
+      if (hc.can_edit) {
+        const date = el("input", { type: "date", min: `${hcYear}-01-01`, max: `${hcYear}-12-31` });
+        const kind = el("select", {}, ...Object.entries(hc.kinds).map(([k, v]) => el("option", { value: k }, v)));
+        const desc = el("input", { type: "text", placeholder: "Occasion, e.g. Diwali-Balipratipada", maxlength: "120" });
+        const add = el("button", { type: "button", class: "secondary small" }, "Add / update day");
+        add.addEventListener("click", async () => {
+          if (!date.value) { toast("Pick a date", "bad"); return; }
+          try { await api("/api/admin/calendar/day", { method: "PUT", json: { exchange: code, day: date.value, kind: kind.value, description: desc.value } });
+            toast(`${ex.name}: ${date.value} saved`, "ok"); loadHolidays(); }
+          catch (e) { toast("Couldn't save", "bad", e.message); }
+        });
+        box.append(el("div", { class: "hc-add" }, date, kind, desc, add));
+      }
+      list.append(box);
+    }
+  }
+
+  async function decide(action, p) {
+    const ex = hc.exchanges[p.exchange].name;
+    if (action === "approve") {
+      const ok = await dialog({ title: `Apply the ${ex} ${p.year} import?`,
+        message: "The fetcher and the parsers use these days from the next run. Every change is recorded in the audit log.", confirmText: "Approve" });
+      if (!ok) return;
+    }
+    try { await api(`/api/admin/calendar/${action}`, { method: "POST", json: { exchange: p.exchange, year: p.year } });
+      toast(action === "approve" ? `${ex} ${p.year} updated` : "Import discarded", "ok"); }
+    catch (e) { toast("Couldn't " + action, "bad", e.message); }
+    loadHolidays();
+  }
+
+  async function removeDay(code, d) {
+    const ok = await dialog({ title: `Remove ${d.day}?`, message: `${hc.exchanges[code].name}: ${d.description || ""}\nThe day counts as a normal day again.`,
+      confirmText: "Remove", danger: true });
+    if (!ok) return;
+    try { await api("/api/admin/calendar/day", { method: "DELETE", json: { exchange: code, day: d.day } }); toast("Removed", "ok"); }
+    catch (e) { toast("Couldn't remove", "bad", e.message); }
+    loadHolidays();
+  }
+
+  $("#hcPrev").addEventListener("click", () => { hcYear -= 1; loadHolidays(); });
+  $("#hcNext").addEventListener("click", () => { hcYear += 1; loadHolidays(); });
+  $("#hcImport").addEventListener("click", async () => {
+    try { const r = await api("/api/admin/calendar/import", { method: "POST", json: {} });
+      toast("Import started", "ok", `Run #${r.run.id} reads the exchanges' holiday pages on GitHub. Review the result here — nothing changes until you approve it.`); }
+    catch (e) { toast("Couldn't start the import", "bad", e.message); }
+    loadHolidays();
+  });
 
   // ------------------------------------------------------------ upload log
   $("#logSegment").addEventListener("change", loadLog);

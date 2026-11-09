@@ -11,3 +11,8 @@ Stage 2C runs it on GitHub Actions (`app/build_job.py`), right after a fetch: th
 Rules that no daily exchange file carries live in `static_rates.yaml` and `mcx_contracts.yaml`
 (versioned in Git; every snapshot records their SHA-256 and the Git commit it was built from).
 Edit them through a pull request, then press Rebuild on the Data readiness page.
+
+## Local changes (Stage 2B+, holiday calendars)
+
+- `nfo.last_trading_day` / `nfo.previous_trading_day` take an optional `segment` (default `NFO`);
+  `bfo.py` and `mcx.py` pass their own, so BSE and MCX use their exchanges' holiday lists instead of NSE's.

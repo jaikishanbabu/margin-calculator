@@ -81,14 +81,14 @@ def bod_choice(data_dir: Path, today: date, trade_date: date | None = None) -> d
     days = sorted(p.name for p in base.iterdir() if re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.name)) if base.is_dir() else []
     cycles = {d: {c: t for _, c, t in span_cycles(data_dir, d)} for d in days}
     sod = [d for d in days if START_OF_DAY in cycles[d]]
-    trade = trade_date.isoformat() if trade_date else max([nfo.last_trading_day(data_dir, today).isoformat()] + sod[-1:])
+    trade = trade_date.isoformat() if trade_date else max([nfo.last_trading_day(data_dir, today, SEGMENT).isoformat()] + sod[-1:])
 
     def pick(day, cycle, stale, note):
         return {"trade_date": trade, "day": day, "cycle": cycle, "stale": stale, "note": note,
                 "created": f"{cycles[day][cycle]:%Y-%m-%d %H:%M}"}
     if START_OF_DAY in cycles.get(trade, {}):
         return pick(trade, START_OF_DAY, False, "")
-    prev = nfo.previous_trading_day(data_dir, trade)
+    prev = nfo.previous_trading_day(data_dir, trade, SEGMENT)
     if END_OF_DAY in cycles.get(prev, {}):
         return pick(prev, END_OF_DAY, True, f"{trade}'s start-of-day (-01) file isn't out; using {prev}'s end-of-day file")
     earlier = [d for d in sod if d < trade]

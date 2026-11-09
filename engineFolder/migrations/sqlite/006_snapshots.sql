@@ -18,3 +18,4 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS ix_snapshots_seg ON snapshots (segment, basis, status, id);
 CREATE TRIGGER IF NOT EXISTS snapshots_no_delete BEFORE DELETE ON snapshots
 BEGIN SELECT RAISE(ABORT, 'snapshots: DELETE is not allowed'); END;
+INSERT OR IGNORE INTO schema_migrations (version) VALUES ('006_snapshots');

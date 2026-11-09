@@ -430,10 +430,10 @@ def load_bhavcopy(conn: sqlite3.Connection, path: Path) -> tuple[int, int]:
 
 
 # ---- start of day (BOD): the file client margins use all day ----------------------
-def last_trading_day(data_dir: Path | None, day: date) -> date:
+def last_trading_day(data_dir: Path | None, day: date, segment: str = SEGMENT) -> date:
     from exfetch.dates import Calendar
     cal = Calendar(Path(data_dir) / "_cache") if data_dir else None
-    ok = (lambda d: cal.is_trading_day(d, SEGMENT)) if cal else (lambda d: d.weekday() < 5)
+    ok = (lambda d: cal.is_trading_day(d, segment)) if cal else (lambda d: d.weekday() < 5)
     while not ok(day):
         day -= timedelta(days=1)
     return day
@@ -519,11 +519,11 @@ def _i1_spots(data_dir: Path, span_date: str, sp: spanmod.Span, cycle: str) -> d
     return {}
 
 
-def previous_trading_day(data_dir: Path | None, day: str) -> str:
+def previous_trading_day(data_dir: Path | None, day: str, segment: str = SEGMENT) -> str:
     from exfetch.dates import Calendar      # weekends + NSE's cached holiday list
     if data_dir:
         cal = Calendar(Path(data_dir) / "_cache")
-        return cal.previous_trading_day(datetime.strptime(day, "%Y-%m-%d").date(), SEGMENT).isoformat()
+        return cal.previous_trading_day(datetime.strptime(day, "%Y-%m-%d").date(), segment).isoformat()
     d = datetime.strptime(day, "%Y-%m-%d").date() - timedelta(days=1)
     while d.weekday() >= 5:
         d -= timedelta(days=1)

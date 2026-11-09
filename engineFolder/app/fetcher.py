@@ -25,7 +25,7 @@ DEFAULTS = {"fetch_auto_enabled": False, "fetch_frequency_min": 30,
 STALE_RUN_MINUTES = 45          # a run with no news for this long is marked failed
 FINAL_STATUSES = ("done", "failed", "skipped")
 ITEM_STATUSES = ("queued", "running", "archived", "have", "pending", "blocked", "failed", "not_due", "built")
-TRIGGERS = ("auto", "manual", "rebuild")       # rebuild: parse already-archived files, fetch nothing
+TRIGGERS = ("auto", "manual", "rebuild", "calendar")   # rebuild: parse only; calendar: import holiday pages only
 # SPAN cycles kept for the full retention window; any other SPAN cycle is "intraday"
 KEEP_CYCLES = {"i1", "i01", "s", "bod", "eod", "final", "00", "-00"}
 
@@ -260,6 +260,19 @@ def job_started(run_id, github_run_id=None):
     return job_config(run_id)
 
 
+def upload_trade_date(run, requested):
+    """A segment's trading date inside a run (its own exchange's calendar): within 10 days of the run's."""
+    if not requested:
+        return run["trade_date"]
+    try:
+        a, b = datetime.strptime(run["trade_date"], "%Y%m%d"), datetime.strptime(str(requested), "%Y%m%d")
+    except ValueError:
+        raise ValueError("trade_date must be YYYYMMDD")
+    if abs((b - a).days) > 10:
+        raise ValueError("trade_date is too far from the run's date")
+    return b.strftime("%Y%m%d")
+
+
 def job_move_trade_date(run_id, new_date):
     """The job found the run's date is an exchange holiday: move it forward to the next trading day.
     Only forward, at most 10 days, only while running, and only before anything was uploaded."""
@@ -303,14 +316,16 @@ def report_items(run_id, items):
             if st not in ITEM_STATUSES:
                 raise ValueError(f"bad item status {st!r}")
             ref = str(it.get("source_ref", ""))[:120]
+            tdt = str(it.get("trade_date") or "")[:8] or None
             row = (it.get("segment", "")[:10], it.get("file_type", "")[:30], st, str(it.get("detail") or "")[:500],
-                   it.get("upload_id"), iso())
+                   it.get("upload_id"), tdt, iso())
             if c.execute("SELECT id FROM fetch_items WHERE run_id = ? AND source_ref = ?", (run_id, ref)).fetchone():
                 c.execute("UPDATE fetch_items SET segment = ?, file_type = ?, status = ?, detail = ?, upload_id = ?, "
-                          "updated_at = ? WHERE run_id = ? AND source_ref = ?", row + (run_id, ref))
+                          "trade_date = COALESCE(?, trade_date), updated_at = ? WHERE run_id = ? AND source_ref = ?",
+                          row + (run_id, ref))
             else:
-                c.insert("INSERT INTO fetch_items (segment, file_type, status, detail, upload_id, updated_at, run_id, source_ref) "
-                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row + (run_id, ref))
+                c.insert("INSERT INTO fetch_items (segment, file_type, status, detail, upload_id, trade_date, updated_at, "
+                         "run_id, source_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row + (run_id, ref))
 
 
 def job_finished(run_id, status="done", message=""):

@@ -83,14 +83,14 @@ def bod_choice(data_dir: Path, today: date, trade_date: date | None = None) -> d
     days = sorted(p.name for p in base.iterdir() if re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.name)) if base.is_dir() else []
     cycles = {d: {c: t for _, c, t in span_cycles(data_dir, d)} for d in days}
     sod_days = [d for d in days if START_OF_DAY in cycles[d]]
-    trade = trade_date.isoformat() if trade_date else max([nfo.last_trading_day(data_dir, today).isoformat()] + sod_days[-1:])
+    trade = trade_date.isoformat() if trade_date else max([nfo.last_trading_day(data_dir, today, SEGMENT).isoformat()] + sod_days[-1:])
 
     def pick(day, cycle, stale, note):
         return {"trade_date": trade, "day": day, "cycle": cycle, "stale": stale, "note": note,
                 "created": f"{cycles[day][cycle]:%Y-%m-%d %H:%M}"}
     if START_OF_DAY in cycles.get(trade, {}):
         return pick(trade, START_OF_DAY, False, "")
-    prev = nfo.previous_trading_day(data_dir, trade)
+    prev = nfo.previous_trading_day(data_dir, trade, SEGMENT)
     if END_OF_DAY in cycles.get(prev, {}):
         return pick(prev, END_OF_DAY, True, f"{trade}'s start-of-day (-00) file isn't out; using {prev}'s FINAL "
                                             f"(ICCL recomputes volatility overnight: options can be ~0.5% off)")
@@ -274,7 +274,7 @@ def _apply_elm(conn, bse: list[dict], info: dict, log):
 def _lots_and_closes(conn, bh: Input | None, sp, info: dict, data_dir, log):
     """Lots from the previous trading day's bhavcopy (per symbol + expiry, else symbol);
     previous close = its UndrlygPric, else the start-of-day file's spot (marked)."""
-    prev = nfo.previous_trading_day(data_dir, info["trade_date"])
+    prev = nfo.previous_trading_day(data_dir, info["trade_date"], SEGMENT)
     lots, lot_sym, close = {}, collections.Counter(), {}
     if bh:
         with open(bh.path, newline="", encoding="utf-8-sig") as f:

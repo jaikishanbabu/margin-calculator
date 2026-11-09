@@ -82,13 +82,24 @@ def materialize(eng, files, data_dir, source_map, log=print):
     return names
 
 
-def prime_calendar(data_dir, fetch_json):
-    """The loader reads NSE's holiday list from data/_cache (no network of its own)."""
-    from exfetch.dates import Calendar
-    try:
-        Calendar(Path(data_dir) / "_cache", fetch_json)._load()
-    except Exception as e:
-        print(f"    holiday list unavailable ({e}); weekends only")
+def prime_calendar(data_dir, fetch_json, calendar_entries=None, today=None):
+    """The loader reads holiday lists from data/_cache (no network of its own): the admin's Holiday
+    calendar for every year it covers; NSE's own list for the current year if NSE's isn't entered."""
+    from exfetch.dates import Calendar, today_ist
+    from app.holidays import Cal
+    cache = Path(data_dir) / "_cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    today = today or today_ist()
+    cal = Cal(calendar_entries or [])
+    years = set().union(*cal.years.values()) if cal.years else set()
+    for y in sorted(years):
+        if cal.has_year("NSE", y):
+            (cache / f"holidays_{y}.json").write_text(json.dumps(cal.loader_cache(y)))
+    if not cal.has_year("NSE", today.year):
+        try:
+            Calendar(cache, fetch_json)._load()
+        except Exception as e:
+            print(f"    holiday list unavailable ({e}); weekends only")
 
 
 def newest_day(data_dir, folder_seg, kind):
@@ -144,11 +155,14 @@ def used_inputs(files, names, info):
     return out
 
 
-def build_segments(eng, run_id, segments, fetch_json=None, today=None, log=print, force=False):
+def build_segments(eng, run_id, segments, fetch_json=None, today=None, log=print, force=False, calendar_entries=None):
     """Build snapshots for each segment that has a parser. Returns counts {built, have, failed}."""
     from exfetch.dates import today_ist
     today = today or today_ist()
     rules = rules_digest()
+    if calendar_entries:          # holidays change the loader's previous-day / start-of-day choices
+        rules["holiday_calendar"] = _sha(json.dumps(sorted(calendar_entries, key=lambda e: (e["exchange"], e["day"])),
+                                                    sort_keys=True).encode())
     counts = {}
 
     def item(seg, basis, status, detail=""):
@@ -188,7 +202,7 @@ def build_segments(eng, run_id, segments, fetch_json=None, today=None, log=print
         try:
             data_dir = work / "data"
             data_dir.mkdir()
-            prime_calendar(data_dir, fetch_json)
+            prime_calendar(data_dir, fetch_json, calendar_entries, today)
             for b in todo:
                 eng.item(run_id, source_ref=f"build:{seg}:{b}", segment=seg, file_type="snapshot", status="running",
                          detail="downloading inputs" if b == todo[0] else "")

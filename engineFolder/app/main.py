@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, fetcher, readiness, segments, uploads
+from . import audit, auth, backup, config, db, fetcher, holidays, readiness, segments, uploads
 from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
@@ -398,6 +398,49 @@ async def snapshot_get(request, user):
     return ok({"snapshot": s})
 
 
+# ---------------------------------------------------------------- holiday calendar
+@endpoint("admin", "superadmin")
+async def calendar_overview(request, user):
+    try:
+        year = int(request.query_params.get("year") or fetcher.now_ist().year)
+    except ValueError:
+        return err("Bad year")
+    data = await run_in_threadpool(holidays.overview, year)
+    data["can_edit"] = user["role"] == "superadmin"
+    data["active"] = await run_in_threadpool(fetcher.active_run)
+    return ok(data)
+
+
+@endpoint("superadmin")
+async def calendar_day(request, user):
+    b = await body_json(request)
+    ex, day = str(b.get("exchange", "")), str(b.get("day", ""))
+    if request.method == "DELETE":
+        await run_in_threadpool(holidays.remove_day, user, ex, day, client_ip(request))
+    else:
+        await run_in_threadpool(holidays.set_day, user, ex, day, str(b.get("kind", "")),
+                                str(b.get("description", "")), client_ip(request))
+    return ok({"saved": True})
+
+
+@endpoint("admin", "superadmin")
+async def calendar_import(request, user):
+    run = await run_in_threadpool(fetcher.create_run, "calendar", user["username"], ["ALL"], None, client_ip(request))
+    return ok({"run": run}, 202)
+
+
+@endpoint("superadmin")
+async def calendar_decide(request, user):
+    b = await body_json(request)
+    ex, year = str(b.get("exchange", "")), int(b.get("year") or 0)
+    if request.path_params["action"] not in ("approve", "discard"):
+        return err("Not found", 404)
+    if request.path_params["action"] == "approve":
+        return ok(await run_in_threadpool(holidays.approve, user, ex, year, client_ip(request)))
+    await run_in_threadpool(holidays.discard, user, ex, year, client_ip(request))
+    return ok({"discarded": True})
+
+
 # ---------------------------------------------------------------- scheduler tick (Supabase pg_cron, OPS token)
 @endpoint(ops=True)
 async def ops_fetch_tick(request, user):
@@ -460,7 +503,7 @@ async def job_upload(request, user):
     actor = {"username": "auto-fetcher" if run["trigger"] == "auto" else f"fetcher ({run['requested_by']})"}
     result = await run_in_threadpool(
         uploads.process, actor, f.filename, b"".join(chunks), segment, file_type,
-        run["trade_date"], str(form.get("cycle", "")) or None, client_ip(request),
+        fetcher.upload_trade_date(run, str(form.get("trade_date", ""))), str(form.get("cycle", "")) or None, client_ip(request),
         str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
         {"url": str(form.get("url", ""))[:400], "run_id": rid})
     return ok({"upload": result}, 201)
@@ -470,6 +513,24 @@ async def job_upload(request, user):
 async def job_trade_date(request, user):
     b = await body_json(request)
     return ok(await run_in_threadpool(fetcher.job_move_trade_date, int(request.path_params["rid"]), b.get("trade_date", "")))
+
+
+@endpoint(fetcher_job=True)
+async def job_calendar(request, user):
+    return ok(await run_in_threadpool(lambda: {"entries": holidays.dump(), "sources": holidays.sources()}))
+
+
+@endpoint(fetcher_job=True)
+async def job_calendar_proposal(request, user):
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running" or run["trigger"] != "calendar":
+        return err("Not a running calendar import", 409)
+    b = await body_json(request)
+    found = b.get("found") if isinstance(b.get("found"), list) else []
+    p = await run_in_threadpool(holidays.save_proposal, rid, str(b.get("exchange", "")), int(b.get("year") or 0),
+                                found[:400], str(b.get("source", ""))[:300], (str(b["error"])[:500] if b.get("error") else None))
+    return ok({"proposal": p})
 
 
 @endpoint(fetcher_job=True)
@@ -593,6 +654,12 @@ routes = [
     Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
     Route("/api/fetcher/build/inputs", job_build_inputs),
+    Route("/api/fetcher/calendar", job_calendar),
+    Route("/api/fetcher/runs/{rid:int}/calendar-proposal", job_calendar_proposal, methods=["POST"]),
+    Route("/api/admin/calendar", calendar_overview),
+    Route("/api/admin/calendar/day", calendar_day, methods=["PUT", "DELETE"]),
+    Route("/api/admin/calendar/import", calendar_import, methods=["POST"]),
+    Route("/api/admin/calendar/{action:str}", calendar_decide, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/trade-date", job_trade_date, methods=["POST"]),
     Route("/api/fetcher/uploads/{uid:int}/original", job_original),
     Route("/api/fetcher/runs/{rid:int}/snapshot", job_snapshot, methods=["POST"]),

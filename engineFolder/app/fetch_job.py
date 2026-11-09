@@ -22,6 +22,8 @@ from pathlib import Path
 import requests
 import yaml
 
+from app import holidays
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -89,6 +91,25 @@ def due(src_phase, trade_date, now, trigger):
     return now.strftime("%H:%M") >= EOD_NOT_BEFORE
 
 
+def segment_dates(d, today, trigger, segments, trading):
+    """Per segment: the run's date if its exchange trades then; an evening run for a future date moves
+    on past that exchange's holidays; a daytime auto run on a holiday skips the segment."""
+    seg_date, seg_skip = {}, {}
+    for seg in segments:
+        ex = holidays.EXCHANGE_OF.get(seg, "NSE")
+        sd = d
+        if not trading(ex, d):
+            if d > today:
+                for _ in range(10):
+                    sd += timedelta(days=1)
+                    if trading(ex, sd):
+                        break
+            elif trigger == "auto":
+                seg_skip[seg] = f"{d} is a {ex.replace('_', ' ')} holiday"
+        seg_date[seg] = sd
+    return seg_date, seg_skip
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", type=int, required=True)
@@ -110,37 +131,48 @@ def main():
     dflt = cat.get("defaults", {})
     http = Http(cat.get("sessions", {}), min(int(dflt.get("timeout", 60)), 45), min(int(dflt.get("retries", 3)), 2),
                 dflt.get("min_interval_sec", 0.6), browser_headless=True)
-    cal = Calendar(Path(tempfile.mkdtemp()), lambda u: http.get_json(u, "nse"))
-    rebuild = trigger == "rebuild"
+    nse_cal = Calendar(Path(tempfile.mkdtemp()), lambda u: http.get_json(u, "nse"))   # fallback only
+    calj = eng.call("GET", "/api/fetcher/calendar").json()
+    cal = holidays.Cal(calj["entries"])
+    rebuild, calendar_run = trigger == "rebuild", trigger == "calendar"
     today = datetime.now(IST).date()
-    if not rebuild and d > today:            # an evening run for the next trading day: skip holidays
-        try:
-            nd = d
-            for _ in range(10):
-                if cal.is_trading_day(nd, "EQ"):
-                    break
-                nd += timedelta(days=1)
-            if nd != d:
-                r = eng.call("POST", f"/api/fetcher/runs/{rid}/trade-date", json={"trade_date": nd.strftime("%Y%m%d")})
-                if r.status_code == 200:
-                    print(f"{d} is an exchange holiday - fetching for {nd}")
-                    d, td = nd, nd.strftime("%Y%m%d")
-        except Exception as e:
-            print(f"holiday check failed ({e}); keeping {d}")
-    if trigger == "auto":
-        try:
-            if not cal.is_trading_day(d, "EQ"):
-                eng.call("POST", f"/api/fetcher/runs/{rid}/finish", json={"status": "skipped", "message": f"{d} is not a trading day"})
-                print("not a trading day - nothing to do")
-                return
-        except Exception as e:
-            print(f"holiday check failed ({e}); continuing")
 
-    have_rows = eng.call("GET", f"/api/fetcher/have?trade_date={td}").json()["have"]
-    have_refs = {h["source_ref"] for h in have_rows}
+    if calendar_run:                          # import the exchanges' holiday pages, nothing else
+        from app.calendar_job import import_all
+        counts = import_all(eng, rid, http)
+        http.close()
+        summary = ", ".join(f"calendar {k} {v}" for k, v in sorted(counts.items()))
+        eng.call("POST", f"/api/fetcher/runs/{rid}/finish", json={"status": "done", "message": summary or "nothing found"})
+        print("finished:", summary)
+        return
+
+    def trading(ex, day):
+        """The admin's calendar for that exchange; NSE's own list if that year isn't entered yet."""
+        if cal.has_year(ex, day.year):
+            return cal.is_trading_day(ex, day)
+        try:
+            return nse_cal.is_trading_day(day, {"NSE": "EQ", "NSE_CD": "CDS", "BSE": "EQ", "MCX": "MCX"}[ex])
+        except Exception as e:
+            print(f"holiday check failed ({e}); weekends only")
+            return day.weekday() < 5
+
+    # each segment's trading date, by its own exchange's calendar
+    seg_date, seg_skip = segment_dates(d, today, trigger, {v[0] for v in smap.values()}, trading)
+    print("trading dates:", {k: str(v) for k, v in sorted(seg_date.items())}, "skipped:", seg_skip)
+
+    have_refs = set()
+    for sd in sorted(set(seg_date.values())):
+        sdt = sd.strftime("%Y%m%d")
+        for h in eng.call("GET", f"/api/fetcher/have?trade_date={sdt}").json()["have"]:
+            have_refs.add((sdt, h["source_ref"]))
 
     sources = [s for s in cat["sources"] if s.get("enabled", True) and s["id"] in smap
                and ("ALL" in want or smap[s["id"]][0] in want)] if not rebuild else []
+    if trigger == "auto" and sources and all(smap[x["id"]][0] in seg_skip for x in sources):
+        eng.call("POST", f"/api/fetcher/runs/{rid}/finish", json={"status": "skipped",
+                 "message": "; ".join(sorted(set(seg_skip.values())))})
+        print("not a trading day for any segment - nothing to do")
+        return
     plan = []
     for src in sources:
         for variant, loop, phase in Agent.variants(src):
@@ -148,43 +180,51 @@ def main():
             plan.append((src, variant, loop, phase, ref))
     for src, variant, loop, phase, ref in plan:     # show the whole list as queued first
         seg, ft = smap[src["id"]]
-        eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status="queued", detail="")
+        eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status="queued", detail="",
+                 trade_date=seg_date[seg].strftime("%Y%m%d"))
 
     counts = {}
     for src, variant, loop, phase, ref in plan:
         seg, ft = smap[src["id"]]
         sid = src["id"]
         versions, refresh = src.get("versions", False), src.get("refresh", False)
+        sd = seg_date[seg]
+        sdt = sd.strftime("%Y%m%d")
 
         def report(status, detail="", upload_id=None):
             counts[status] = counts.get(status, 0) + 1
-            eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status=status, detail=detail[:480], upload_id=upload_id)
-            print(f"  {status:9} {ref:38} {detail[:120]}")
+            eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status=status, detail=detail[:480], upload_id=upload_id,
+                     trade_date=sdt)
+            print(f"  {status:9} {ref:38} {sdt} {detail[:120]}")
 
-        if not due(phase, d, now, trigger):
+        if seg in seg_skip:
+            report("not_due", seg_skip[seg])
+            continue
+        if not due(phase, sd, now, trigger):
             report("not_due", f"end-of-day file - not checked before {EOD_NOT_BEFORE} IST")
             continue
-        if not (versions or refresh) and ref in have_refs:
+        if not (versions or refresh) and (sdt, ref) in have_refs:
             report("have", "already archived today")
             continue
-        eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status="running", detail="")
+        eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status="running", detail="", trade_date=sdt)
         errors, kind = [], "pending"
         done = False
         for strategy in src["try"]:
             try:
-                cands = resolve(strategy, d, loop, http, src.get("session"))
+                cands = resolve(strategy, sd, loop, http, src.get("session"))
                 if not versions:
                     cands = cands[-1:]
                 new, skipped, failed = [], 0, []
                 for c in cands:
                     vref = f"{ref}:{c.name}" if versions else ref
-                    if versions and vref in have_refs:
+                    if versions and (sdt, vref) in have_refs:
                         skipped += 1
                         continue
                     data = c.data if c.data is not None else http.get(c.url, src.get("session")).content
                     if not looks_like_archive_ok(c.name, data):
                         raise NotPublished(f"corrupt/partial archive {c.url}")
-                    form = {"source_id": sid, "source_ref": vref, "url": c.url, "replace": "1" if refresh else ""}
+                    form = {"source_id": sid, "source_ref": vref, "url": c.url, "replace": "1" if refresh else "",
+                            "trade_date": sdt}
                     if ft == "span":
                         cyc = span_cycle(sid, loop, c.name)
                         if cyc:
@@ -194,10 +234,10 @@ def main():
                     if up.status_code == 201:
                         u = up.json()["upload"]
                         new.append(f"#{u['id']} {c.name} ({len(data):,} B)")
-                        have_refs.add(vref)
+                        have_refs.add((sdt, vref))
                     elif up.status_code == 400 and "already uploaded" in up.text:
                         skipped += 1
-                        have_refs.add(vref)
+                        have_refs.add((sdt, vref))
                     else:
                         failed.append(f"{c.name}: engine said {up.status_code} {up.json().get('error', '')[:200]}")
                 if failed:
@@ -224,7 +264,8 @@ def main():
     from app.readiness import PARSERS
     build_for = [s for s in PARSERS if "ALL" in want or s in want]
     try:
-        bc = build_segments(eng, rid, build_for, lambda u: http.get_json(u, "nse"), force=rebuild)
+        bc = build_segments(eng, rid, build_for, lambda u: http.get_json(u, "nse"), force=rebuild,
+                            calendar_entries=calj["entries"])
         for k, v in bc.items():
             counts[f"snapshot {k}"] = counts.get(f"snapshot {k}", 0) + v
     except Exception as e:
