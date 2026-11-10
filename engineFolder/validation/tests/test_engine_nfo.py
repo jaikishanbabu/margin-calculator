@@ -421,11 +421,26 @@ def test_final_file_27oct_keeps_expiring_contracts():
 
 def test_no_risk_data_and_errors():
     e = eng()
-    try:
-        e.margin([Position({"symbol": "RVNL", "expiry": "2026-10-27", "strike": 90, "option_type": "P"}, -1925)])
-        raise AssertionError("estimated a contract with no risk array")
-    except NoRiskData as x:
-        assert x.contracts == ["RVNL26OCT90PE"] and x.as_of["span_cycle"] == "s"
+    # margin-calculator change (see VALIDATION_CHANGES.md): the example contract comes from the data.
+    # RVNL 27-Oct 90 PE was listed-without-risk-data in the owner's local files; NSE's archived
+    # contract master doesn't list it, so pick any listed NSE contract this SPAN file has no risk array for.
+    row = e.conn.execute("""SELECT c.symbol, c.expiry, c.strike, c.option_type, c.lot_size FROM contract c
+                            LEFT JOIN risk_array r ON r.contract_id = c.id
+                            WHERE c.in_master = 1 AND c.exchange = 'NSE' AND r.contract_id IS NULL
+                            ORDER BY (c.symbol = 'RVNL' AND c.strike = 90) DESC, c.symbol, c.expiry LIMIT 1""").fetchone()
+    if row is None:
+        print("skip: every listed contract has a risk array in this SPAN file (not on disk: a listed contract "
+              "without one)")
+    else:
+        sym, exp, strike, ot, lot = row
+        k = {"symbol": sym, "expiry": exp}
+        if ot:
+            k.update(strike=strike, option_type=ot)
+        try:
+            e.margin([Position(k, -(lot or 1))])
+            raise AssertionError(f"estimated a contract with no risk array: {k}")
+        except NoRiskData as x:
+            assert len(x.contracts) == 1 and x.as_of["span_cycle"] == "s", (x.contracts, x.as_of)
     try:
         e.margin([Position("NOSUCH26OCTFUT", 1)])
         raise AssertionError("unknown contract accepted")
