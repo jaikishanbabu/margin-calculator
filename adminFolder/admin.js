@@ -508,7 +508,7 @@
   // validation against brokers (Stage 3)
   let vrep = null;
   const money = x => x == null ? "—" : Number(x).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  const V_STATUS = { passed: ["Passed", "ok"], lagged: ["Passed (older file)", "ok"], failed: ["Failed", "bad"],
+  const V_STATUS = { passed: ["Passed", "ok"], lagged: ["Passed (earlier SPAN file)", "ok"], failed: ["Failed", "bad"],
                      error: ["Could not run", "bad"], pending: ["No broker figures", ""] };
 
   function renderValidation() {
@@ -581,7 +581,7 @@
     const pend = R.baskets.filter(b => b.status === "pending");
     const ft = R.tests.filter(t => t.status === "failed");
     if (ft.length) box.append(el("h3", {}, `Engine tests failed (${ft.length})`),
-      ...ft.map(t => el("details", { class: "v-basket failed" }, el("summary", {}, el("span", { class: "v-id" }, t.name), pill("Failed", "bad")),
+      ...ft.map(t => el("details", { class: "v-basket failed", open: "" }, el("summary", {}, el("span", { class: "v-id" }, t.name), pill("Failed", "bad")),
         el("pre", { class: "v-pre" }, t.detail))));
     if (bad.length) box.append(el("h3", {}, `Baskets that didn't match (${bad.length})`), ...bad.map(basketRow));
     if (good.length) { const d = el("details", { class: "v-group" }, el("summary", {}, `Baskets that matched (${good.length})`)); good.forEach(b => d.append(basketRow(b))); box.append(d); }
