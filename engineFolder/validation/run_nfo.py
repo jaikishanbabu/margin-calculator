@@ -86,6 +86,70 @@ def run_baskets(t):
     return rows
 
 
+RULES = {
+    "bod": "Start-of-day file only",
+    "live": "Latest file only",
+    "portfolio_max": "Higher of start-of-day and latest - whole portfolio",
+    "underlying_max": "Higher of start-of-day and latest - per underlying",
+}
+
+
+def rule_check(t):
+    """Which blocking rule reproduces the brokers' figures? For every basket with figures, work
+    out the portfolio on the start-of-day file and on the file live at capture time, then apply
+    each rule and compare SPAN / exposure / total with the broker (same tolerance)."""
+    import yaml
+    from engine import match as mm
+    fx = yaml.safe_load(t.FIXTURES.read_text())
+    pct, abs_ = fx.get("tolerance_pct", 0.05), fx.get("tolerance_abs", 5)
+    dbs = t.cycle_dbs()
+    rows = []
+    for b in fx["baskets"]:
+        if not t._filled(b):
+            continue
+        at = t._captured(b)
+        want = {k: float(b["expected"][k]) for k in ("span", "exposure", "total") if k in b["expected"]}
+        row = {"id": b["id"], "broker": b.get("broker"), "captured_at": b.get("captured_at"), "want": want}
+        try:
+            pos = [t._position(lg) for lg in b["legs"]]
+            cands = mm.candidate_cycles(t.DATA, at, None)
+            live = cands[0]
+            bod = mm.bod_cycle(cands, at)
+            as_of = at.date().isoformat()
+            m = {"bod": dbs.engine(bod).margin(pos, as_of=as_of, alone=False),
+                 "live": dbs.engine(live).margin(pos, as_of=as_of, alone=False)}
+        except Exception as e:
+            rows.append(dict(row, error=f"{type(e).__name__}: {e}"[:300]))
+            continue
+
+        def figs(x):
+            return {"span": x["span"], "exposure": x["exposure"], "total": x["total"]}
+        got = {"bod": figs(m["bod"]), "live": figs(m["live"])}
+        got["portfolio_max"] = got["bod"] if got["bod"]["total"] >= got["live"]["total"] else got["live"]
+        und = {"span": 0.0, "exposure": 0.0}
+        for sym in set(m["bod"]["underlyings"]) | set(m["live"]["underlyings"]):
+            a, c = m["bod"]["underlyings"].get(sym), m["live"]["underlyings"].get(sym)
+            pick = max((x for x in (a, c) if x), key=lambda x: x["span"] + x["exposure"])
+            und["span"] += pick["span"]
+            und["exposure"] += pick["exposure"]
+        extra = max(m["bod"].get("other", 0), m["live"].get("other", 0))
+        und["total"] = und["span"] + und["exposure"] + extra
+        got["underlying_max"] = und
+        ok = {r: not mm.off(want, got[r], pct, abs_) for r in RULES}
+        differs = abs(got["bod"]["total"] - got["live"]["total"]) > mm.tolerance(want.get("total", 0), pct, abs_)
+        rows.append(dict(row, bod=f"{bod.day} {bod.cycle}", live=f"{live.day} {live.cycle}", same_file=bod == live,
+                         files_differ=differs, matches=ok,
+                         got={r: {k: _num(v) for k, v in g.items()} for r, g in got.items()}))
+    summary = {}
+    for r in RULES:
+        summary[r] = {"all": sum(1 for x in rows if x.get("matches", {}).get(r)),
+                      "deciding": sum(1 for x in rows if x.get("files_differ") and x["matches"].get(r))}
+    summary["baskets"] = sum(1 for x in rows if "matches" in x)
+    summary["deciding_baskets"] = sum(1 for x in rows if x.get("files_differ"))
+    summary["errors"] = sum(1 for x in rows if "error" in x)
+    return {"names": RULES, "summary": summary, "baskets": rows}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -99,6 +163,12 @@ def main():
         report["baskets"] = run_baskets(t)
     except Exception:
         report["crash"] = traceback.format_exc()[-2000:]
+    try:                                   # information only: never changes pass / fail
+        print("rule check ...")
+        report["rules"] = rule_check(t)
+        print("rules:", report["rules"]["summary"])
+    except Exception:
+        report["rules_error"] = traceback.format_exc()[-2000:]
     s = {}
     for r in report["tests"]:
         s[f"tests_{r['status']}"] = s.get(f"tests_{r['status']}", 0) + 1

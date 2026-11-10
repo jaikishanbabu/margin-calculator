@@ -365,3 +365,4 @@ button.busy::after{content:"";position:absolute;left:50%;top:50%;width:14px;heig
   border:2px solid currentColor;border-color:rgba(255,255,255,.45);border-top-color:#fff;animation:mc-spin .7s linear infinite}
 button.secondary.busy::after,button.link.busy::after{border-color:var(--primary-18);border-top-color:var(--primary)}
 @media (prefers-reduced-motion:reduce){.spinner,button.busy::after{animation-duration:2s}.top-bar::before{animation:none;left:0;width:100%;opacity:.6}}
+.v-rules{max-width:720px}.v-rules .v-tr{grid-template-columns:2.6fr 1fr 1fr}

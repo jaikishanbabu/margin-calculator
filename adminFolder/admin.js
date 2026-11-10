@@ -576,6 +576,32 @@
     if (R.crash) box.append(el("p", { class: "rd-note bad" }, "The validation crashed: " + R.crash.slice(-300)));
     const days = Object.entries(R.data || {}).map(([d, c]) => `${d.slice(8)}-${d.slice(5, 7)}: ${c.join(" ") || "none"}`).join(" · ");
     box.append(el("p", { class: "hint" }, "SPAN files used: " + (days || "none")));
+    if (R.rules) {
+      const S = R.rules.summary, n = S.deciding_baskets;
+      box.append(el("h3", {}, "Which blocking rule do brokers follow?"),
+        el("p", { class: "hint" }, `Each basket worked out on the start-of-day file and on the file live when it was captured. ` +
+          `${n} of ${S.baskets} baskets had different margins on the two files — only those can tell the rules apart.` +
+          (S.errors ? ` ${S.errors} couldn't be worked out.` : "")),
+        el("div", { class: "v-table v-rules" },
+          el("div", { class: "v-tr head" }, el("span", {}, "Rule"), el("span", {}, "All baskets"), el("span", {}, `Deciding (${n})`)),
+          ...Object.entries(R.rules.names).map(([k, name]) => el("div", { class: "v-tr" },
+            el("span", {}, name), el("span", {}, `${S[k].all} / ${S.baskets}`), el("span", {}, `${S[k].deciding} / ${n}`)))));
+      const dec = R.rules.baskets.filter(b => b.files_differ);
+      if (dec.length) {
+        const d = el("details", { class: "v-group" }, el("summary", {}, `Deciding baskets (${dec.length})`));
+        for (const b of dec) {
+          const r = el("details", { class: "v-basket" }, el("summary", {}, el("span", { class: "v-id" }, b.id),
+            el("span", { class: "hint" }, `${b.broker} · ${b.captured_at} · start-of-day ${b.bod} · live ${b.live}`)));
+          r.append(el("div", { class: "v-table" },
+            el("div", { class: "v-tr head" }, el("span", {}, "Total"), el("span", {}, "Ours"), el("span", {}, "Matches"), el("span", {}, "")),
+            el("div", { class: "v-tr" }, el("span", {}, "Broker"), el("span", {}, money(b.want.total)), el("span", {}, ""), el("span", {}, "")),
+            ...Object.entries(R.rules.names).map(([k, name]) => el("div", { class: "v-tr" + (b.matches[k] ? "" : " off") },
+              el("span", {}, name), el("span", {}, money(b.got[k].total)), el("span", {}, b.matches[k] ? "yes" : "no"), el("span", {}, "")))));
+          d.append(r);
+        }
+        box.append(d);
+      }
+    } else if (R.rules_error) box.append(el("p", { class: "rd-note warn" }, "The rule check didn't run: " + R.rules_error.slice(-200)));
     const bad = R.baskets.filter(b => ["failed", "error"].includes(b.status));
     const good = R.baskets.filter(b => ["passed", "lagged"].includes(b.status));
     const pend = R.baskets.filter(b => b.status === "pending");
