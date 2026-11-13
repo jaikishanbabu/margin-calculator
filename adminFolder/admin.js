@@ -420,8 +420,14 @@
     catch (e) { toast("Couldn't save", "bad", e.message); }
     loadFetcher();
   }
-  $("#fxAuto").addEventListener("change", (ev) => {
+  $("#fxAuto").addEventListener("change", async (ev) => {
     const on = ev.target.checked;
+    if (!on) {                     // a stray tap shouldn't stop all downloads without anyone noticing
+      const ok = await dialog({ title: "Turn off auto fetch?",
+        message: "No exchange files will be downloaded until someone turns it back on, and the parsed data will go out of date.",
+        confirmText: "Turn off", danger: true });
+      if (!ok) { ev.target.checked = true; return; }
+    }
     saveFx({ fetch_auto_enabled: on, fetch_frequency_min: +$("#fxFreq").value },
       on ? `Auto fetch on · every ${$("#fxFreq").selectedOptions[0].text.replace("Every ", "")}` : "Auto fetch off");
   });
@@ -498,6 +504,7 @@
       box.append(card);
     }
     renderValidation();
+    $("#rdAutoOff").classList.toggle("hidden", rd.auto_fetch !== false);
     $("#rdActive").classList.toggle("hidden", !rd.active);
     if (rd.active) {
       $("#rdActive").textContent = `Run #${rd.active.id} (${rd.active.trigger}) is in progress — this page refreshes when it finishes.`;

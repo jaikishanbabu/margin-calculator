@@ -168,6 +168,7 @@
         <h1>Data readiness</h1>
         <p class="lead">Each segment's archived files are parsed into a checked database right after every fetch. If a check fails, the previous data stays in use. Margins use the start-of-day (i1) SPAN file unless the SuperAdmin switches a segment to the latest cycle.</p>
         <p class="hint hidden" id="rdReadOnly">Only the SuperAdmin can change which SPAN file a segment uses.</p>
+        <p class="rd-note bad hidden" id="rdAutoOff">Auto fetch is off — no new exchange files are being downloaded. Turn it on in Exchange File Fetcher.</p>
         <div class="result warn hidden" id="rdActive"></div>
         <div id="rdList"></div>
       </div>

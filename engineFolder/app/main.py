@@ -370,6 +370,7 @@ async def readiness_overview(request, user):
         return {"segments": readiness.readiness(), "basis": readiness.basis_settings(),
                 "segment_names": {k: segments.SEGMENTS[k]["name"] for k in readiness.ALL_SEGMENTS},
                 "active": fetcher.active_run(), "can_edit": user["role"] == "superadmin",
+                "auto_fetch": bool(fetcher.settings().get("fetch_auto_enabled")),
                 "validation": {seg: {k: v for k, v in validation.status(seg).items() if k != "latest"} |
                                {"latest": validation.status(seg)["latest"]} for seg in validation.SEGMENTS}}
     return ok(await run_in_threadpool(work))
