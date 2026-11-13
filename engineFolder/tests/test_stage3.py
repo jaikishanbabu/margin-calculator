@@ -157,3 +157,46 @@ def test_margin_rate_limit():
     lim = margin.RateLimit(n=3, per=60)
     assert [lim.allow("1.2.3.4") for _ in range(4)] == [True, True, True, False]
     assert lim.allow("5.6.7.8")
+
+
+class PickerEngine(FakeEngine):
+    """A tiny contract / underlying table, enough for the calculator's pickers."""
+
+    def __init__(self, path):
+        import sqlite3
+        super().__init__(path)
+        c = sqlite3.connect(":memory:")
+        c.row_factory = sqlite3.Row
+        c.executescript("""
+          CREATE TABLE underlying (symbol TEXT, kind TEXT, spot_price REAL, prev_close REAL, is_banned INTEGER, in_master INTEGER);
+          CREATE TABLE contract (symbol TEXT, exchange TEXT, instrument TEXT, expiry TEXT, strike REAL, option_type TEXT,
+                                 lot_size INTEGER, in_master INTEGER);
+          INSERT INTO underlying VALUES ('NIFTY','INDEX',25400,25480,0,1), ('RELIANCE','STOCK',1490,1488,1,1),
+                                        ('OLDCO','STOCK',10,10,0,1), ('SENSEX','INDEX',80000,80000,0,0);
+          INSERT INTO contract VALUES ('NIFTY','NSE','FUT','2026-11-25',NULL,NULL,75,1),
+            ('NIFTY','NSE','OPT','2026-11-18',25400,'C',75,1), ('NIFTY','NSE','OPT','2026-11-18',25500,'C',75,1),
+            ('NIFTY','NSE','OPT','2026-11-18',25400,'P',75,1), ('NIFTY','NSE','OPT','2026-11-04',25000,'C',75,1),
+            ('NIFTY','BSE','OPT','2026-11-20',25400,'C',75,1), ('RELIANCE','NSE','FUT','2026-11-25',NULL,NULL,500,1),
+            ('OLDCO','NSE','FUT','2026-10-28',NULL,NULL,100,1);
+        """)
+        self.conn = c
+
+
+def test_calculator_pickers(mx, monkeypatch):
+    import engine as engine_pkg
+    monkeypatch.setattr(engine_pkg, "Engine", PickerEngine)
+    c = mx["c"]
+    assert c.get("/api/margin/meta?segment=NFO").status_code == 503            # nothing built yet
+    rid = running_run(mx)
+    post_snapshot(mx, rid, blob=b"nfo-db", trade_date="2026-11-16")
+    m = c.get("/api/margin/meta?segment=NFO").json()
+    assert [s["symbol"] for s in m["symbols"]] == ["NIFTY", "RELIANCE"]        # index first; expired / BSE-only left out
+    assert m["symbols"][1]["banned"] is True and m["data"]["span_cycle"] == "i1" and m["data"]["basis"] == "bod"
+    ch = c.get("/api/margin/contracts?segment=NFO&symbol=nifty").json()
+    assert ch["ref"] == 25480 and [e["expiry"] for e in ch["expiries"]] == ["2026-11-18", "2026-11-25"]
+    e18, e25 = ch["expiries"]
+    assert e18["CE"] == [25400, 25500] and e18["PE"] == [25400] and e18["future"] is False and e25["future"] is True
+    assert e25["lot_size"] == 75
+    assert c.get("/api/margin/contracts?segment=NFO&symbol=NOPE").status_code == 404
+    assert c.get("/api/margin/meta?segment=MCX").status_code == 503
+

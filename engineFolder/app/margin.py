@@ -138,3 +138,56 @@ class RateLimit:
 
 
 limiter = RateLimit()
+
+
+# ---------------------------------------------------------------- pickers for the calculator page
+def _first_day(snap):
+    td = snap.get("trade_date") or ""
+    return f"{td[:4]}-{td[4:6]}-{td[6:8]}" if len(td) == 8 else "0000-00-00"
+
+
+def meta(segment):
+    """What the calculator page needs before the first basket: the data in use, the validation
+    state and the instruments (index first, then stocks) with their reference price."""
+    eng, snap, fallback = engine_for(segment)
+    day = _first_day(snap)
+    rows = eng.conn.execute(
+        """SELECT u.symbol, u.kind, COALESCE(u.prev_close, u.spot_price) AS ref, u.is_banned
+           FROM underlying u WHERE u.in_master = 1 AND EXISTS (
+             SELECT 1 FROM contract c WHERE c.symbol = u.symbol AND c.exchange = 'NSE' AND c.in_master = 1
+             AND c.expiry >= ?)
+           ORDER BY (u.kind = 'INDEX') DESC, u.symbol""", (day,)).fetchall()
+    v = validation.status(segment)
+    return {"segment": segment,
+            "data": {"basis": snap["basis"], "trade_date": snap.get("trade_date"), "span_day": snap.get("span_day"),
+                     "span_cycle": snap.get("span_cycle"), "span_created": snap.get("span_created"),
+                     "stale": str((snap.get("info") or {}).get("bod_stale")) == "1", "fallback": fallback},
+            "validated": v["validated"] and snap["basis"] == "bod",
+            "validation_note": "" if (v["validated"] and snap["basis"] == "bod") else
+            (v["reason"] if not v["validated"] else "Latest-cycle margins aren't validated against brokers"),
+            "symbols": [{"symbol": r["symbol"], "kind": r["kind"], "ref": r["ref"], "banned": bool(r["is_banned"])}
+                        for r in rows]}
+
+
+def contracts(segment, symbol):
+    """Listed contracts of one underlying: per expiry, the lot size, whether a future trades,
+    and the call / put strikes."""
+    eng, snap, _ = engine_for(segment)
+    sym = str(symbol or "").upper()[:30]
+    rows = eng.conn.execute(
+        """SELECT expiry, instrument, option_type, strike, lot_size FROM contract
+           WHERE symbol = ? AND exchange = 'NSE' AND in_master = 1 AND expiry >= ?
+           ORDER BY expiry, instrument, strike""", (sym, _first_day(snap))).fetchall()
+    if not rows:
+        raise MarginError(f"No listed {segment} contracts for {sym}")
+    out = {}
+    for r in rows:
+        e = out.setdefault(r["expiry"], {"expiry": r["expiry"], "lot_size": r["lot_size"], "future": False,
+                                          "CE": [], "PE": []})
+        if r["instrument"] == "FUT":
+            e["future"] = True
+            e["lot_size"] = r["lot_size"] or e["lot_size"]
+        elif r["option_type"] in ("C", "P"):
+            e["CE" if r["option_type"] == "C" else "PE"].append(r["strike"])
+    ref = eng.conn.execute("SELECT COALESCE(prev_close, spot_price) FROM underlying WHERE symbol = ?", (sym,)).fetchone()
+    return {"symbol": sym, "ref": ref[0] if ref else None, "expiries": list(out.values())}

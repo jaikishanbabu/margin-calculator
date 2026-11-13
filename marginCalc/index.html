@@ -15,23 +15,72 @@
 <script src="calc.js" defer></script>
 </head>
 <body>
+<div class="top-bar" id="topBar" role="progressbar" aria-label="Loading"></div>
 <header class="top">
   <div class="brand"><img src="logo.svg" alt="" class="logo" width="32" height="32"><span>Margin Calculator</span></div>
   <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch theme">
-      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    </button>
+    <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  </button>
 </header>
+
 <main class="wrap">
   <div class="eyebrow">Calculators · Trading</div>
   <h1>F&amp;O Margin Calculator</h1>
-  <p class="lead">SPAN and exposure margins for NSE, BSE, MCX and currency derivatives, calculated from the exchanges' own risk files.</p>
-  <div class="card">
-    <h2>Coming soon</h2>
-    <p id="status" class="muted">Checking status…</p>
-    <ul id="segments"></ul>
-    <p class="fine">Margins are shown only for segments whose calculations have passed validation against exchange files and broker test cases.</p>
+  <p class="lead">SPAN and exposure margin for a basket of futures and options, worked out from NSE Clearing's own risk files — with hedge benefits across the basket.</p>
+
+  <nav class="seg-tabs" aria-label="Segment">
+    <button type="button" class="seg active" aria-current="true">NSE F&amp;O</button>
+    <button type="button" class="seg" disabled title="Coming after its validation">BSE F&amp;O <small>soon</small></button>
+    <button type="button" class="seg" disabled title="Coming after its validation">Currency <small>soon</small></button>
+    <button type="button" class="seg" disabled title="Coming after its validation">MCX <small>soon</small></button>
+  </nav>
+
+  <div class="boot" id="boot"><span class="spinner big"></span><span id="bootText">Loading today's risk data…</span></div>
+  <div class="unavailable hidden" id="unavailable"></div>
+
+  <div class="layout hidden" id="app">
+    <section class="card" aria-labelledby="addTitle">
+      <div class="data-line" id="dataLine"></div>
+      <h2 id="addTitle">Add a position</h2>
+      <form id="legForm" class="leg-form" autocomplete="off">
+        <label class="f-symbol">Instrument
+          <input id="fSymbol" list="symbolList" placeholder="NIFTY, BANKNIFTY, RELIANCE…" required spellcheck="false" autocapitalize="characters">
+          <datalist id="symbolList"></datalist>
+        </label>
+        <label>Expiry<select id="fExpiry" required disabled></select></label>
+        <div class="f-type" role="group" aria-label="Instrument type">
+          <span class="lbl">Type</span>
+          <div class="segmented" id="fType">
+            <button type="button" data-v="FUT">Future</button><button type="button" data-v="CE" class="on">Call</button><button type="button" data-v="PE">Put</button>
+          </div>
+        </div>
+        <label id="strikeWrap">Strike<select id="fStrike" disabled></select></label>
+        <div class="f-side" role="group" aria-label="Buy or sell">
+          <span class="lbl">Side</span>
+          <div class="segmented side" id="fSide"><button type="button" data-v="B">Buy</button><button type="button" data-v="S" class="on">Sell</button></div>
+        </div>
+        <label>Lots<input id="fLots" type="number" min="1" max="10000" step="1" value="1" inputmode="numeric" required></label>
+        <div class="f-add">
+          <span class="lbl" id="fLotInfo">&nbsp;</span>
+          <button type="submit" id="fAdd" disabled>Add</button>
+        </div>
+      </form>
+
+      <div class="basket-head">
+        <h2>Basket <span class="count" id="legCount"></span></h2>
+        <button type="button" class="link" id="clearAll">Clear all</button>
+      </div>
+      <div id="basket" class="basket"></div>
+    </section>
+
+    <section class="card result" aria-live="polite" aria-labelledby="resTitle">
+      <h2 id="resTitle">Margin required</h2>
+      <div id="result"><p class="empty">Add a position to see its margin.</p></div>
+    </section>
   </div>
+
+  <p class="fine">Figures follow NSE Clearing's SPAN method and exposure rules on the start-of-day risk file, the file brokers margin new orders on. Brokers may add their own extra margin. Not investment advice.</p>
 </main>
 </body>
 </html>

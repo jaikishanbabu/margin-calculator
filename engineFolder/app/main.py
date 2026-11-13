@@ -417,6 +417,25 @@ async def margin_api(request):
     return ok(res)
 
 
+async def margin_meta(request):
+    if not margin_mod.limiter.allow(client_ip(request)):
+        return err("Too many requests - wait a minute", 429)
+    try:
+        return ok(await run_in_threadpool(margin_mod.meta, request.query_params.get("segment", "NFO").upper()))
+    except margin_mod.MarginError as e:
+        return err(str(e), 503)
+
+
+async def margin_contracts(request):
+    if not margin_mod.limiter.allow(client_ip(request)):
+        return err("Too many requests - wait a minute", 429)
+    try:
+        return ok(await run_in_threadpool(margin_mod.contracts, request.query_params.get("segment", "NFO").upper(),
+                                          request.query_params.get("symbol", "")))
+    except margin_mod.MarginError as e:
+        return err(str(e), 404)
+
+
 # ---------------------------------------------------------------- validation against brokers (Stage 3)
 @endpoint("admin", "superadmin")
 async def validation_overview(request, user):
@@ -711,6 +730,8 @@ routes = [
     Route("/api/fetcher/runs/{rid:int}/validation", job_validation, methods=["POST"]),
     Route("/api/admin/validation", validation_overview),
     Route("/api/margin", margin_api, methods=["POST"]),
+    Route("/api/margin/meta", margin_meta),
+    Route("/api/margin/contracts", margin_contracts),
     Route("/api/admin/validation/run", validation_run, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/calendar-proposal", job_calendar_proposal, methods=["POST"]),
     Route("/api/admin/calendar", calendar_overview),
