@@ -21,7 +21,7 @@ FILE_TYPES = {
     "settlement": {"label": "Settlement prices", "ext": ".csv .zip"},
     "ban_list": {"label": "F&O ban list", "ext": ".csv .txt"},
     "var": {"label": "VaR margin file", "ext": ".dat .csv .txt .zip"},
-    "security_master": {"label": "Security / scrip master", "ext": ".csv .txt .zip"},
+    "security_master": {"label": "Security / scrip master", "ext": ".csv .txt .zip .gz"},
     "surveillance": {"label": "Surveillance list (ASM/GSM/T2T)", "ext": ".csv .json .txt .xlsx"},
 }
 

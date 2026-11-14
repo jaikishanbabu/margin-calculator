@@ -226,3 +226,14 @@ def test_too_large_even_after_compression_rejected_clearly(client, admin, monkey
 def test_small_files_stored_as_uploaded(client, admin):
     u = upload(client, admin, "a.zip", zip_bytes({"a.spn": span_xml()}), cycle="i1").json()["upload"]
     assert u["archive_encoding"] == "identity" and not u["archive_key"].endswith(".gz")
+
+
+def test_nse_cash_security_master_arrives_gzipped(client):
+    """NSE publishes NSE_CM_security_<date>.csv.gz - the fetcher's upload must accept it."""
+    import gzip as _gz
+    from conftest import login, upload
+    sa = login(client)
+    data = _gz.compress(b"Token|Symbol|Series\n2885|RELIANCE|EQ\n")
+    r = upload(client, sa, "NSE_CM_security_13112026.csv.gz", data, segment="NSECM", file_type="security_master",
+               trade_date="20261113")
+    assert r.status_code == 201, r.text

@@ -34,7 +34,7 @@ ALLOWED_KINDS = {
     "settlement": {"zip", "text"},
     "ban_list": {"text"},
     "var": {"zip", "gzip", "text"},
-    "security_master": {"zip", "text"},
+    "security_master": {"zip", "gzip", "text"},   # NSE_CM_security_<date>.csv.gz
     "surveillance": {"text", "json", "xlsx"},
 }
 INNER_KINDS = {"xml", "text", "json"}   # what may sit inside a zip/gzip
