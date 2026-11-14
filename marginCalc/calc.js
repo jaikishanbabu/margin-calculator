@@ -61,7 +61,7 @@
     try {
       const old = localStorage.getItem("mc_basket_v1");           // first version kept one NSE F&O basket
       if (old && !localStorage.getItem("mc_basket_v2_NFO")) localStorage.setItem("mc_basket_v2_NFO", old);
-      basket = JSON.parse(localStorage.getItem(storeKey()) || "[]").filter(l => l && l.symbol && l.expiry);
+      basket = JSON.parse(localStorage.getItem(storeKey()) || "[]").filter(l => l && l.symbol && (l.expiry || l.cash));
     } catch (_) { basket = []; }
   }
   const save = () => { try { localStorage.setItem(storeKey(), JSON.stringify(basket)); } catch (_) { /* private mode */ } };
@@ -77,6 +77,9 @@
     for (const x of MARKETS[tab].exchanges)
       sel.append(el("option", { value: x.ex, selected: x === exch, disabled: !x.live }, x.label + (x.live ? "" : " — coming soon")));
     $("#exHint").textContent = exch.live ? "" : "Coming after it passes validation against brokers";
+    $("#fine").textContent = tab === "fo"
+      ? "Figures follow the clearing corporation's SPAN method and exposure rules on the start-of-day risk file, the file brokers margin new orders on. Brokers may add their own extra margin. Not investment advice."
+      : "Figures follow NSE's VaR file (VaR + exposure + ad hoc margin) with surveillance rules and the common 20% broker minimum for intraday. Brokers may charge more. Not investment advice.";
     $("#lead").textContent = tab === "fo"
       ? "SPAN and exposure margin for a basket of futures and options, worked out from the clearing corporation's own risk files — with hedge benefits across the basket."
       : "VaR and exposure margin for buying or selling shares, worked out from the exchange's daily VaR file for each stock.";
@@ -122,7 +125,11 @@
     }
     clearTimeout(slow);
     $("#boot").classList.add("hidden"); $("#app").classList.remove("hidden");
+    const cash = SEG === "NSECM";
+    $("#legForm").classList.toggle("hidden", cash); $("#cashForm").classList.toggle("hidden", !cash);
+    $("#addTitle").textContent = cash ? "Add an order" : "Add a position";
     drawDataLine();
+    if (cash) { setupCash(); drawBasket(); calc(); return; }
     const dl = $("#symbolList");
     const rank = s => { const i = POPULAR.indexOf(s.symbol); return i < 0 ? 1000 + (s.kind === "INDEX" ? 0 : 500) : i; };
     const syms = [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
@@ -134,11 +141,13 @@
 
   function drawDataLine() {
     const d = meta.data, box = $("#dataLine"); box.textContent = "";
-    box.append(el("span", {}, `Data for ${day(d.trade_date)} · SPAN ${d.span_cycle || ""}` +
+    if (SEG === "NSECM") box.append(el("span", {}, `Data for ${day(d.trade_date)} · VaR batch ${d.span_cycle || ""} · prices: last close`));
+    else box.append(el("span", {}, `Data for ${day(d.trade_date)} · SPAN ${d.span_cycle || ""}` +
       (d.span_day && d.span_day !== d.trade_date ? ` of ${day(d.span_day)}` : "") +
       (d.span_created ? ` · file created ${d.span_created}` : "") + ` · ${d.basis === "bod" ? "start-of-day file" : "latest file"}`));
+    const n = (meta.evidence || {}).baskets;
     box.append(el("span", { class: "badge " + (meta.validated ? "ok" : "warn"), title: meta.validation_note || "" },
-      meta.validated ? "Validated against brokers" : "Not validated"));
+      meta.validated ? (SEG === "NSECM" && n ? `Validated (${n} Dhan baskets)` : "Validated against brokers") : "Not validated"));
     if (d.stale) box.append(el("span", { class: "badge warn" }, "Today's start-of-day file isn't out yet"));
   }
 
@@ -204,6 +213,39 @@
   });
   $("#clearAll").addEventListener("click", () => { basket = []; save(); drawBasket(); calc(); });
 
+  // ---------------------------------------------------------------- cash orders
+  let cSide = "buy", cashReady = false;
+  function setupCash() {
+    const dl = $("#cashList"); dl.textContent = "";
+    const rank = s => { const i = POPULAR.indexOf(s.symbol); return i < 0 ? 1000 : i; };
+    for (const s of [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol)))
+      dl.append(el("option", { value: s.symbol }, [s.series, s.flag].filter(Boolean).join(" · ")));
+    if (!$("#cSymbol").value) $("#cSymbol").value = "RELIANCE";
+    pickStock();
+    if (cashReady) return;
+    cashReady = true;
+    segmented($("#cSide"), v => { cSide = v; });
+    $("#cSymbol").addEventListener("input", pickStock);
+    $("#cashForm").addEventListener("submit", ev => {
+      ev.preventDefault();
+      const s = stock(); const qty = parseInt($("#cQty").value, 10);
+      if (!s || !(qty > 0)) return;
+      const price = parseFloat($("#cPrice").value);
+      basket.push({ cash: true, symbol: s.symbol, side: cSide, qty, price: price > 0 ? price : null, lot: s.lot, series: s.series });
+      save(); drawBasket(); calc();
+    });
+  }
+  const stock = () => meta && meta.symbols.find(s => s.symbol === $("#cSymbol").value.trim().toUpperCase());
+  function pickStock() {
+    const s = stock();
+    $("#cAdd").disabled = !s;
+    if (!s) { $("#cInfo").textContent = $("#cSymbol").value ? "Pick a stock from the list" : " "; return; }
+    $("#cPrice").placeholder = s.close ? `last close ${s.close}` : "enter a price";
+    $("#cQty").step = String(s.lot || 1); $("#cQty").min = String(s.lot || 1);
+    if (s.lot > 1 && parseInt($("#cQty").value, 10) % s.lot) $("#cQty").value = String(s.lot);
+    $("#cInfo").textContent = [s.series, s.lot > 1 ? `lot ${s.lot}` : null, s.flag].filter(Boolean).join(" · ");
+  }
+
   // ---------------------------------------------------------------- basket
   const legName = l => `${l.symbol} ${expLabel(l.expiry)} ${l.type === "FUT" ? "FUT" : strikeTxt(l.strike) + " " + l.type}`;
   function drawBasket() {
@@ -211,6 +253,20 @@
     $("#legCount").textContent = basket.length ? `(${basket.length})` : "";
     $("#clearAll").classList.toggle("hidden", !basket.length);
     if (!basket.length) { box.append(el("p", { class: "empty" }, "No positions yet.")); return; }
+    if (SEG === "NSECM") {
+      basket.forEach((l, i) => {
+        const qty = el("input", { type: "number", min: String(l.lot || 1), step: String(l.lot || 1), value: String(l.qty), inputmode: "numeric", "aria-label": "Quantity" });
+        qty.addEventListener("change", () => { const n = parseInt(qty.value, 10); if (n > 0) { l.qty = n; save(); calc(); } else qty.value = l.qty; });
+        const sideBtn = el("button", { type: "button", class: "side-pill " + (l.side === "buy" ? "buy" : "sell"), title: "Switch buy / sell" }, l.side.toUpperCase());
+        sideBtn.addEventListener("click", () => { l.side = l.side === "buy" ? "sell" : "buy"; save(); drawBasket(); calc(); });
+        box.append(el("div", { class: "leg" }, sideBtn,
+          el("div", { class: "leg-name" }, l.symbol, el("small", {}, l.price ? `at ₹${l.price}` : "at last close")),
+          el("label", { class: "leg-lots" }, qty, el("span", {}, "shares")),
+          el("button", { type: "button", class: "icon-btn", "aria-label": "Remove", title: "Remove",
+                         onclick: () => { basket.splice(i, 1); save(); drawBasket(); calc(); } }, "×")));
+      });
+      return;
+    }
     basket.forEach((l, i) => {
       const lots = el("input", { type: "number", min: "1", step: "1", value: String(l.lots), inputmode: "numeric", "aria-label": "Lots" });
       lots.addEventListener("change", () => { const n = parseInt(lots.value, 10); if (n > 0) { l.lots = n; save(); calc(); } else lots.value = l.lots; });
@@ -224,6 +280,32 @@
     });
   }
 
+  function drawCash(box, m) {
+    box.classList.remove("loading"); box.textContent = "";
+    const T = m.total;
+    box.append(
+      el("div", { class: "total" }, el("span", { class: "lbl" }, "Intraday margin (MIS)"), el("strong", {}, inr(T.intraday_margin)),
+        el("span", { class: "hint" }, T.leverage ? `${T.leverage}× leverage on ${inr(T.value)} of orders` : "")),
+      el("div", { class: "split" },
+        el("div", {}, el("span", { class: "lbl" }, "Delivery (CNC) — buys"), el("b", {}, inr(T.delivery_value))),
+        el("div", {}, el("span", { class: "lbl" }, "Order value"), el("b", {}, inr(T.value))),
+        el("div", {}, el("span", { class: "lbl" }, "At NSE's rate alone"), el("b", {}, inr(T.nse_margin)))));
+    const t = el("div", { class: "legs-table" },
+      el("div", { class: "tr head" }, el("span", {}, "Order"), el("span", {}, "Rate"), el("span", {}, "Intraday"), el("span", {}, "Delivery")));
+    for (const g of m.legs) t.append(el("div", { class: "tr" },
+      el("span", {}, `${g.side === "buy" ? "Buy" : "Sell"} ${g.qty.toLocaleString("en-IN")} ${g.symbol}${g.series !== "EQ" ? " (" + g.series + ")" : ""} @ ${inr(g.price, 2)}`),
+      el("span", {}, `${g.intraday_pct}%`), el("span", {}, inr(g.intraday_margin)),
+      el("span", {}, g.side === "buy" ? inr(g.delivery_value) : "holdings")));
+    box.append(t);
+    for (const g of m.legs) if (g.rate_reasons && g.rate_reasons.length)
+      box.append(el("p", { class: "note" }, `${g.symbol}: ${g.rate_reasons.join("; ")}`));
+    for (const w of m.warnings || []) box.append(el("p", { class: "note warn" }, w));
+    const d = m.data || {}, n = (m.evidence || {}).baskets;
+    box.append(el("p", { class: "note" + (m.validated ? "" : " warn") },
+      (m.validated ? `Validated: matched Dhan on ${n || ""} test baskets. ` : `Not validated against brokers: ${m.validation_note} `) +
+      `VaR batch ${d.span_cycle || ""} of ${day(d.trade_date)}. Intraday includes the 20% broker minimum; sells on delivery need the shares in your holdings.`));
+  }
+
   // ---------------------------------------------------------------- margin
   let calcTimer = null, calcSeq = 0;
   function calc() { clearTimeout(calcTimer); calcTimer = setTimeout(runCalc, 250); }
@@ -235,6 +317,19 @@
     box.classList.add("loading");
     if (!box.querySelector(".total")) { box.textContent = ""; box.append(el("div", { class: "loading-ph" }, el("span", { class: "spinner" }), "Working out the margin…")); }
     let m;
+    if (SEG === "NSECM") {
+      try {
+        m = await api("/api/margin", { method: "POST", body: { segment: SEG, positions: basket.map(l => ({
+          symbol: l.symbol, side: l.side, qty: l.qty, price: l.price })) } });
+      } catch (e) {
+        if (seq !== calcSeq) return;
+        box.classList.remove("loading"); box.textContent = "";
+        box.append(el("p", { class: "error" }, e.status === 429 ? "Too many requests — wait a minute and try again." : e.message));
+        return;
+      }
+      if (seq !== calcSeq) return;
+      return drawCash(box, m);
+    }
     try {
       m = await api("/api/margin", { method: "POST", body: { segment: SEG, positions: basket.map(l => ({
         symbol: l.symbol, expiry: l.expiry, strike: l.strike, option_type: l.type === "FUT" ? null : l.type,
@@ -271,6 +366,14 @@
       `SPAN ${d.span_cycle || ""} of ${day(d.span_day || d.trade_date)}` + (d.span_created ? `, created ${d.span_created}` : "") + "."));
   }
 
-  drawPicker();
-  boot();
+  (async () => {                        // which exchanges are served (validated) right now
+    try {
+      const r = await api("/api/margin/segments");
+      for (const m of Object.values(MARKETS)) for (const x of m.exchanges)
+        if (r.segments[x.seg]) x.live = r.segments[x.seg].served;
+      if (!exch.live) { const l = MARKETS[tab].exchanges.find(x => x.live); if (l) { exch = l; SEG = l.seg; } }
+    } catch (_) { /* keep the defaults: NSE F&O only */ }
+    drawPicker();
+    boot();
+  })();
 })();

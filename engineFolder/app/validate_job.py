@@ -18,15 +18,27 @@ from app.fetch_job import Engine
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "validation" / "data"
-FROM, TO = "2026-10-22", "2026-10-28"
-NEED = ["2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28"]   # 20 Oct Dussehra, weekends
-SOURCES = ["nfo.span", "nfo.contract_master", "nfo.elm", "nfo.bhavcopy", "nfo.settlement_prices", "nfo.ban_list",
-           "nse.bhavcopy"]          # not fo_mktlots: only today's exists, and it would be wrong for October
+# Per segment: the days the broker baskets and tests need, what to download, and the runner.
+PLANS = {
+    "NFO": {"from": "2026-10-22", "to": "2026-10-28", "runner": "run_nfo.py",
+            "need": ["2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28"],  # 20 Oct Dussehra
+            # not fo_mktlots: only today's exists, and it would be wrong for October
+            "sources": ["nfo.span", "nfo.contract_master", "nfo.elm", "nfo.bhavcopy", "nfo.settlement_prices",
+                        "nfo.ban_list", "nse.bhavcopy"]},
+    "NSECM": {"from": "2026-10-23", "to": "2026-10-27", "runner": "run_nse.py",
+              "need": ["2026-10-23", "2026-10-26", "2026-10-27"],
+              # ASM / GSM / security lists only exist for today: October's can't be downloaded now
+              "sources": ["nse.var", "nse.security", "nse.bhavcopy", "nse.regulatory_indicator"]},
+}
+NAMES = {"NFO": "NSE F&O", "NSECM": "NSE Cash"}
 
 
-def inventory():
+def inventory(segment):
     sys.path.insert(0, str(ROOT / "validation"))
-    from run_nfo import data_inventory
+    if segment == "NSECM":
+        from run_nse import data_inventory
+    else:
+        from run_nfo import data_inventory
     return data_inventory(DATA)
 
 
@@ -40,30 +52,35 @@ def main():
     if r.status_code != 200:
         raise SystemExit(f"cannot start run: HTTP {r.status_code} {r.text[:200]}")
     rid = r.json()["run_id"]
+    segs = r.json().get("segments") or ["NFO"]
+    seg = segs[0] if segs and segs[0] in PLANS else "NFO"
+    plan = PLANS[seg]
 
     def item(ref, status, detail=""):
-        eng.item(rid, source_ref=ref, segment="NFO", file_type="validation", status=status, detail=detail[:480])
+        eng.item(rid, source_ref=ref, segment=seg, file_type="validation", status=status, detail=detail[:480])
         print(f"  {status:9} {ref} {detail[:200]}")
 
-    item("validate:data", "running", "checking the 22-28 Oct files")
-    inv = inventory()
-    missing = [d for d in NEED if not inv.get(d)]
+    item("validate:data", "running", f"checking the {plan['from'][8:]}-{plan['to'][8:]} Oct files")
+    inv = inventory(seg)
+    missing = [d for d in plan["need"] if not inv.get(d)]
     if missing:
         item("validate:data", "running", f"downloading {', '.join(missing)} from NSE's archives")
         p = subprocess.run([sys.executable, "-m", "exfetch", "--config", str(ROOT / "exfetch_sources.yaml"),
-                            "--data-dir", str(DATA), "backfill", "--from", FROM, "--to", TO, "--only", *SOURCES],
+                            "--data-dir", str(DATA), "backfill", "--from", plan["from"], "--to", plan["to"],
+                            "--only", *plan["sources"]],
                            cwd=ROOT, capture_output=True, text=True, timeout=2400)
         print(p.stdout[-6000:], p.stderr[-3000:])
-        inv = inventory()
+        inv = inventory(seg)
     have = "; ".join(f"{d[8:10]}-{d[5:7]}: {', '.join(c) or 'none'}" for d, c in sorted(inv.items()))
-    still = [d for d in NEED if not inv.get(d)]
+    still = [d for d in plan["need"] if not inv.get(d)]
     item("validate:data", "failed" if still else "archived",
-         (f"missing {', '.join(still)} - " if still else "") + f"SPAN cycles on disk: {have}")
+         (f"missing {', '.join(still)} - " if still else "") +
+         f"{'VaR batches' if seg == 'NSECM' else 'SPAN cycles'} on disk: {have}")
 
     item("validate:run", "running", "running the engine tests and the broker baskets")
     out = ROOT / "validation" / "report.json"
     env = dict(os.environ, PYTHONPATH=str(ROOT))
-    p = subprocess.run([sys.executable, str(ROOT / "validation" / "run_nfo.py"), "--out", str(out)],
+    p = subprocess.run([sys.executable, str(ROOT / "validation" / plan["runner"]), "--out", str(out)],
                        cwd=ROOT, capture_output=True, text=True, timeout=3600, env=env)
     print(p.stdout[-20000:], p.stderr[-5000:])
     if not out.exists():
@@ -73,7 +90,7 @@ def main():
     report = json.loads(out.read_text())
     report["code_version"] = os.getenv("GITHUB_SHA", "local")[:40]
     s = report["summary"]
-    r = eng.call("POST", f"/api/fetcher/runs/{rid}/validation", json={"segment": "NFO", "report": report}, timeout=120)
+    r = eng.call("POST", f"/api/fetcher/runs/{rid}/validation", json={"segment": seg, "report": report}, timeout=120)
     if r.status_code != 201:
         item("validate:run", "failed", f"engine said {r.status_code}: {r.text[:300]}")
     else:

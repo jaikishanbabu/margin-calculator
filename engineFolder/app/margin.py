@@ -20,7 +20,17 @@ from pathlib import Path
 from . import readiness, validation
 from .storage import get_store
 
-SERVED = ("NFO",)
+SERVED = ("NFO",)                 # always served (validated, labelled when not)
+GATED = ("NSECM",)                # served only once their own broker validation has passed
+
+
+def served(segment):
+    return segment in SERVED or (segment in GATED and validation.status(segment)["validated"])
+
+
+def segments():
+    """Which segments the calculator can show, for its exchange dropdowns."""
+    return {s: {"served": served(s), "validated": validation.status(s)["validated"]} for s in SERVED + GATED}
 CACHE_DIR = Path(os.getenv("SNAPSHOT_CACHE_DIR") or (Path(tempfile.gettempdir()) / "margin-snapshots"))
 KEEP_FILES = 3
 MAX_LEGS = 30
@@ -52,16 +62,16 @@ def _local(snap):
 
 
 def engine_for(segment):
-    if segment not in SERVED:
-        raise MarginError(f"{segment} margins aren't available yet - only NSE F&O is validated")
+    if not served(segment):
+        raise MarginError(f"{segment} margins aren't available yet - they appear once validated against brokers")
     snap, fallback = readiness.in_use(segment)
     if not snap:
         raise MarginError(f"No {segment} data is ready yet")
     with _lock:
         eng = _engines.get(snap["sha256"])
         if eng is None:
-            from engine import Engine
-            eng = Engine(_local(snap))
+            from engine import CashEngine, Engine
+            eng = (CashEngine if segment == "NSECM" else Engine)(_local(snap))
             for k in [k for k in _engines if k != snap["sha256"]]:
                 _engines.pop(k).conn.close()
             _engines[snap["sha256"]] = eng
@@ -89,8 +99,52 @@ def _position(p):
     return Position(c, qty)
 
 
+def _data(snap, fallback, segment):
+    return {"segment": segment, "basis": snap["basis"], "trade_date": snap.get("trade_date"),
+            "span_day": snap.get("span_day"), "span_cycle": snap.get("span_cycle"), "span_created": snap.get("span_created"),
+            "snapshot_id": snap["id"], "fallback": fallback,
+            "stale": str((snap.get("info") or {}).get("bod_stale")) == "1"}
+
+
+def _validated(segment, snap):
+    v = validation.status(segment)
+    ok = v["validated"] and (snap["basis"] == "bod" or segment in GATED)
+    note = "" if ok else (v["reason"] if not v["validated"] else "Latest-cycle margins aren't validated against brokers")
+    return ok, note, (v.get("latest") or {}).get("summary") or {}
+
+
+def cash_margin(orders):
+    from engine import CashError, CashOrder
+    if not isinstance(orders, list) or not orders:
+        raise MarginError("orders must be a non-empty list")
+    if len(orders) > MAX_LEGS:
+        raise MarginError(f"at most {MAX_LEGS} orders")
+    eng, snap, fallback = engine_for("NSECM")
+    try:
+        os_ = []
+        for o in orders:
+            if not isinstance(o, dict) or not o.get("symbol"):
+                raise MarginError("each order needs symbol, side, qty (+ price)")
+            try:
+                qty = int(o.get("qty"))
+            except (TypeError, ValueError):
+                raise MarginError("qty must be a whole number of shares")
+            price = o.get("price")
+            price = float(price) if price not in (None, "") else None
+            os_.append(CashOrder(str(o["symbol"]).upper()[:30], str(o.get("side", "")).lower(), qty, price))
+        m = eng.margin(os_)
+    except CashError as e:
+        raise MarginError(str(e))
+    ok, note, summ = _validated("NSECM", snap)
+    return {"segment": "NSECM", "legs": m["legs"], "total": m["total"], "warnings": m["warnings"],
+            "as_of": m["as_of"], "data": _data(snap, fallback, "NSECM"), "validated": ok, "validation_note": note,
+            "evidence": {"baskets": summ.get("baskets_passed", 0) + summ.get("baskets_lagged", 0)}}
+
+
 def margin(segment, positions, alone=True):
     from engine import NoRiskData, UnknownContract
+    if segment == "NSECM":
+        return cash_margin(positions)
     if not isinstance(positions, list) or not positions:
         raise MarginError("positions must be a non-empty list")
     if len(positions) > MAX_LEGS:
@@ -150,6 +204,8 @@ def meta(segment):
     """What the calculator page needs before the first basket: the data in use, the validation
     state and the instruments (index first, then stocks) with their reference price."""
     eng, snap, fallback = engine_for(segment)
+    if segment == "NSECM":
+        return cash_meta(eng, snap, fallback)
     day = _first_day(snap)
     rows = eng.conn.execute(
         """SELECT u.symbol, u.kind, COALESCE(u.prev_close, u.spot_price) AS ref, u.is_banned
@@ -191,3 +247,15 @@ def contracts(segment, symbol):
             e["CE" if r["option_type"] == "C" else "PE"].append(r["strike"])
     ref = eng.conn.execute("SELECT COALESCE(prev_close, spot_price) FROM underlying WHERE symbol = ?", (sym,)).fetchone()
     return {"symbol": sym, "ref": ref[0] if ref else None, "expiries": list(out.values())}
+
+
+def cash_meta(eng, snap, fallback):
+    rows = eng.conn.execute("""SELECT symbol, series, lot, close, asm_long, asm_short, gsm FROM security
+                               WHERE is_primary = 1 ORDER BY symbol""").fetchall()
+    ok, note, summ = _validated("NSECM", snap)
+    return {"segment": "NSECM", "data": _data(snap, fallback, "NSECM"), "validated": ok, "validation_note": note,
+            "evidence": {"baskets": summ.get("baskets_passed", 0) + summ.get("baskets_lagged", 0)},
+            "symbols": [{"symbol": r["symbol"], "series": r["series"], "lot": r["lot"], "close": r["close"],
+                         "flag": "T2T" if r["series"] in ("BE", "BZ", "ST", "SZ") else
+                                 ("ASM" if r["asm_long"] or r["asm_short"] else ("GSM" if r["gsm"] else None))}
+                        for r in rows]}

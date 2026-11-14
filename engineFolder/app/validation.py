@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from . import audit, db
 
-SEGMENTS = ("NFO",)          # segments with broker baskets; the rest come in Stage 5
+SEGMENTS = ("NFO", "NSECM")  # segments with broker baskets; the rest come in Stage 5
 
 
 def iso():

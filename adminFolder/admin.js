@@ -518,17 +518,28 @@
   const V_STATUS = { passed: ["Passed", "ok"], lagged: ["Passed (earlier SPAN file)", "ok"], failed: ["Failed", "bad"],
                      error: ["Could not run", "bad"], pending: ["No broker figures", ""] };
 
+  const V_SEG = {
+    NFO: { name: "NSE F&O", text: "Your engine tests and the 202 Zerodha / Angel One baskets captured 26–28 Oct, re-run on GitHub with those days' exchange files. A basket passes when SPAN, exposure and total are each within 0.05% or ₹5 of the broker's figures." },
+    NSECM: { name: "NSE Cash", text: "Your cash engine tests (26 Oct files) and the 6 Dhan baskets captured 27 Oct, re-run on GitHub with those days' NSE files. A basket passes when intraday and delivery margin are each within 0.05% or ₹5 of Dhan's figures." },
+  };
+  let vSeg = "NFO";
   function renderValidation() {
     const box = $("#rdValidation"); box.textContent = "";
-    const v = (rd.validation || {}).NFO;
-    if (!v) { box.classList.add("hidden"); return; }
+    const all = rd.validation || {};
+    if (!Object.keys(all).length) { box.classList.add("hidden"); return; }
     box.classList.remove("hidden");
-    const L = v.latest, s = L ? L.summary : {};
+    if (!all[vSeg]) vSeg = Object.keys(all)[0];
+    const v = all[vSeg], L = v.latest, s = L ? L.summary : {};
+    const tabs = el("div", { class: "hc-tabs" }, ...Object.keys(all).map(k => {
+      const b = el("button", { type: "button", class: "hc-tab" + (k === vSeg ? " active" : "") }, V_SEG[k] ? V_SEG[k].name : k,
+        el("span", { class: "hc-count" }, all[k].validated ? "✓" : "–"));
+      b.addEventListener("click", () => { vSeg = k; vrep = null; renderValidation(); });
+      return b;
+    }));
     box.append(el("div", { class: "eyebrow" }, "Accuracy"),
-      el("div", { class: "rd-head" }, el("h2", {}, "NSE F&O: validation against brokers"),
+      el("div", { class: "rd-head" }, el("h2", {}, "Validation against brokers"),
         pill(v.validated ? "Validated" : "Not validated", v.validated ? "ok" : "warn")),
-      el("p", { class: "lead" }, "Your engine tests and the 202 Zerodha / Angel One baskets captured 26–28 Oct, re-run on GitHub with those days' exchange files. " +
-        "A basket passes when SPAN, exposure and total are each within 0.05% or ₹5 of the broker's figures."));
+      tabs, el("p", { class: "lead" }, (V_SEG[vSeg] || {}).text || ""));
     if (!v.validated) box.append(el("p", { class: "rd-note warn" }, v.reason));
     if (L) box.append(el("div", { class: "v-chips" },
       chip(`${(s.baskets_passed || 0) + (s.baskets_lagged || 0)} baskets passed`, "ok"),
@@ -541,8 +552,8 @@
     run.disabled = !!rd.active;
     run.addEventListener("click", async () => {
       run.disabled = true;
-      try { const r = await api("/api/admin/validation/run", { method: "POST", json: { segment: "NFO" } });
-        toast("Validation started", "ok", `Run #${r.run.id} on GitHub. The first run downloads the 22–28 Oct files (about 10–20 minutes); later runs reuse them.`); }
+      try { const r = await api("/api/admin/validation/run", { method: "POST", json: { segment: vSeg } });
+        toast("Validation started", "ok", `Run #${r.run.id} on GitHub. The first run downloads October's files (10–20 minutes); later runs reuse them.`); }
       catch (e) { toast("Couldn't start", "bad", e.message); }
       loadReady();
     });
@@ -555,13 +566,15 @@
 
   async function showReport() {
     if (!vrep) placeholder("#vReport", "Loading the report…");
-    try { vrep = (await api("/api/admin/validation?segment=NFO")).report; } catch (e) { toast("Couldn't load the report", "bad", e.message); return; }
+    try { vrep = (await api(`/api/admin/validation?segment=${vSeg}`)).report; } catch (e) { toast("Couldn't load the report", "bad", e.message); return; }
     drawReport();
   }
 
   function basketRow(b) {
     const [w, k] = V_STATUS[b.status] || [b.status, ""];
-    const legs = b.legs.map(l => `${l.side === "sell" ? "−" : "+"}${l.qty} ${l.symbol} ${l.type}${l.strike ? " " + l.strike : ""} ${l.expiry ? l.expiry.slice(5) : ""}`).join(", ");
+    const legs = b.legs.map(l => l.type === "cash"
+      ? `${l.side} ${l.qty} ${l.symbol} @ ₹${l.price}`
+      : `${l.side === "sell" ? "−" : "+"}${l.qty} ${l.symbol} ${l.type}${l.strike ? " " + l.strike : ""} ${l.expiry ? l.expiry.slice(5) : ""}`).join(", ");
     const row = el("details", { class: "v-basket " + b.status },
       el("summary", {}, el("span", { class: "v-id" }, b.id), pill(w, k), el("span", { class: "hint" }, `${b.broker} · ${b.captured_at || ""}`)));
     row.append(el("div", { class: "hint" }, legs), el("div", { class: "hint" }, b.detail || ""));
@@ -572,7 +585,7 @@
         ...keys.map(key => el("div", { class: "v-tr" + ((b.diff || {})[key] != null && Math.abs(b.diff[key]) > Math.max(5, Math.abs(b.want[key]) * 0.0005) ? " off" : "") },
           el("span", {}, key), el("span", {}, money(b.want[key])), el("span", {}, money((b.ours || {})[key])), el("span", {}, money((b.diff || {})[key]))))));
     }
-    if (b.tried && b.tried.length) row.append(el("div", { class: "hint" }, "SPAN files tried: " + b.tried.map(t => t.cycle + (t.error ? " (error)" : "")).join(", ")));
+    if (b.tried && b.tried.length) row.append(el("div", { class: "hint" }, "Files tried: " + b.tried.map(t => t.cycle + (t.error ? " (error)" : "")).join(", ")));
     return row;
   }
 
@@ -582,7 +595,7 @@
     const R = vrep.report;
     if (R.crash) box.append(el("p", { class: "rd-note bad" }, "The validation crashed: " + R.crash.slice(-300)));
     const days = Object.entries(R.data || {}).map(([d, c]) => `${d.slice(8)}-${d.slice(5, 7)}: ${c.join(" ") || "none"}`).join(" · ");
-    box.append(el("p", { class: "hint" }, "SPAN files used: " + (days || "none")));
+    box.append(el("p", { class: "hint" }, (R.segment === "NSECM" ? "VaR batches used: " : "SPAN files used: ") + (days || "none")));
     if (R.rules) {
       const S = R.rules.summary, n = S.deciding_baskets;
       box.append(el("h3", {}, "Which blocking rule do brokers follow?"),

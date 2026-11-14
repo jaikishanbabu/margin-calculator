@@ -200,3 +200,60 @@ def test_calculator_pickers(mx, monkeypatch):
     assert c.get("/api/margin/contracts?segment=NFO&symbol=NOPE").status_code == 404
     assert c.get("/api/margin/meta?segment=MCX").status_code == 503
 
+
+
+# ---------------------------------------------------------------- NSE cash
+class FakeCash:
+    def __init__(self, path):
+        import sqlite3
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript("""CREATE TABLE security (symbol TEXT, series TEXT, lot INTEGER, close REAL, is_primary INTEGER,
+                                   asm_long TEXT, asm_short TEXT, gsm TEXT);
+            INSERT INTO security VALUES ('RELIANCE','EQ',1,1201.8,1,NULL,NULL,NULL), ('AARTISURF','BE',1,453.45,1,NULL,NULL,NULL),
+                                        ('ADVANCE','EQ',1,88,1,NULL,'Stage I',NULL);""")
+
+    def margin(self, orders):
+        from engine import InvalidQuantity
+        legs = []
+        for o in orders:
+            if o.qty <= 0:
+                raise InvalidQuantity(f"{o.symbol}: quantity must be a whole number above 0")
+            v = o.qty * (o.price or 1201.8)
+            legs.append({"symbol": o.symbol, "series": "EQ", "side": o.side, "qty": o.qty, "price": o.price or 1201.8,
+                         "value": v, "intraday_pct": 20, "intraday_margin": v * .2, "nse_margin": v * .125,
+                         "delivery_value": v if o.side == "buy" else 0, "rate_reasons": [], "warnings": []})
+        tot = {k: sum(l[k] for l in legs) for k in ("value", "intraday_margin", "delivery_value", "nse_margin")}
+        tot["leverage"] = 5.0
+        return {"legs": legs, "total": tot, "warnings": [], "as_of": {"var_batch": 3}}
+
+
+def test_nse_cash_is_served_only_once_validated(mx, monkeypatch):
+    import engine as engine_pkg
+    monkeypatch.setattr(engine_pkg, "CashEngine", FakeCash)
+    c = mx["c"]
+    rid = running_run(mx, seg="NSECM")
+    post_snapshot(mx, rid, seg="NSECM", basis="latest", blob=b"nse-db", info={"span_cycle": "3"})
+    segs = c.get("/api/margin/segments").json()["segments"]
+    assert segs["NFO"]["served"] is True and segs["NSECM"]["served"] is False
+    order = {"segment": "NSECM", "positions": [{"symbol": "RELIANCE", "side": "buy", "qty": 100}]}
+    r = c.post("/api/margin", json=order)
+    assert r.status_code == 400 and "validated" in r.json()["error"]
+    assert c.get("/api/margin/meta?segment=NSECM").status_code == 503
+    c.post(f"/api/fetcher/runs/{rid}/finish", json={"status": "done"}, headers=mx["job"])
+
+    rv = mx["c"].post("/api/admin/validation/run", json={"segment": "NSECM"}, headers=mx["sa"]).json()["run"]["id"]
+    c.post(f"/api/fetcher/runs/{rv}/start", json={}, headers=mx["job"])
+    r = c.post(f"/api/fetcher/runs/{rv}/validation", headers=mx["job"],
+               json={"segment": "NSECM", "report": _report(baskets_passed=4, baskets_lagged=2, tests_passed=11)})
+    assert r.json()["validation"]["status"] == "passed"
+    assert c.get("/api/margin/segments").json()["segments"]["NSECM"]["served"] is True
+    meta = c.get("/api/margin/meta?segment=NSECM").json()
+    flags = {s["symbol"]: s["flag"] for s in meta["symbols"]}
+    assert flags == {"AARTISURF": "T2T", "ADVANCE": "ASM", "RELIANCE": None}
+    assert meta["validated"] is True and meta["evidence"]["baskets"] == 6
+    m = c.post("/api/margin", json=order).json()
+    assert m["total"]["intraday_margin"] == pytest.approx(24036.0) and m["total"]["delivery_value"] == pytest.approx(120180.0)
+    assert m["validated"] is True and m["data"]["span_cycle"] == "3"
+    bad = c.post("/api/margin", json={"segment": "NSECM", "positions": [{"symbol": "RELIANCE", "side": "buy", "qty": 0}]})
+    assert bad.status_code == 400 and "quantity" in bad.json()["error"]
