@@ -268,3 +268,44 @@ def test_build_segments_builds_skips_and_reports_failures(tmp_path, monkeypatch)
     eng3 = FakeEngine(files, {1: span}, live={"bod": "old"}, live_content={"bod": ck})
     build_job.build_segments(eng3, 9, ["NFO"], today=today, log=lambda *a: None, force=True)
     assert eng3.snapshots[0]["unchanged"] == "1"
+
+
+# ---- reference files from an earlier day (build-time fallback) -------------------
+def _cra(loader_key, info, tmp_path):
+    from app.build_job import check_reference_age
+    (tmp_path / "_cache").mkdir(exist_ok=True)
+    check_reference_age(loader_key, info, tmp_path)
+    return info
+
+
+def test_reference_same_day_no_note(tmp_path):
+    info = _cra("NSE", {"var_trade_date": "2026-11-16", "master_trade_date": "2026-11-16"}, tmp_path)
+    assert "fallback_inputs" not in info
+
+
+def test_reference_one_and_two_days_back_noted(tmp_path):
+    # Mon 16-11: Fri 13-11 is one trading day back, Thu 12-11 two
+    info = _cra("NSE", {"var_trade_date": "2026-11-16", "master_trade_date": "2026-11-13"}, tmp_path)
+    assert info["fallback_inputs"] == "master from 13-11 (16-11 not published)"
+    info = _cra("NFO", {"span_trade_date": "2026-11-16", "elm_trade_date": "2026-11-12",
+                        "contract_master_trade_date": "2026-11-13", "master_expected_date": "2026-11-13"}, tmp_path)
+    assert info["fallback_inputs"] == "elm from 12-11 (16-11 not published)"
+
+
+def test_reference_too_old_fails(tmp_path):
+    import pytest
+    from loader.files import MissingFile
+    with pytest.raises(MissingFile, match="master from 11-11 - 16-11 and the 2 trading days"):
+        _cra("NSE", {"var_trade_date": "2026-11-16", "master_trade_date": "2026-11-11"}, tmp_path)
+
+
+def test_optional_reference_too_old_is_only_noted(tmp_path):
+    info = _cra("NSE", {"var_trade_date": "2026-11-16", "master_trade_date": "2026-11-16",
+                        "reg_ind_trade_date": "2026-11-10"}, tmp_path)
+    assert "optional, used anyway" in info["fallback_inputs"]
+
+
+def test_prices_and_risk_files_never_checked(tmp_path):
+    info = _cra("NFO", {"span_trade_date": "2026-11-16", "bhavcopy_trade_date": "2026-11-01",
+                        "settlement_trade_date": "2026-11-01"}, tmp_path)
+    assert "fallback_inputs" not in info

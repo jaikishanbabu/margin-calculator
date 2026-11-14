@@ -184,14 +184,21 @@ def main():
                  trade_date=seg_date[seg].strftime("%Y%m%d"))
 
     counts = {}
+    # A day's later SPAN cycles / VaR batches never come before its first one (i1, batch 1):
+    # until the first is archived, the rest aren't even checked.
+    first_variant = {s["id"]: Agent.variants(s)[0][0] for s in sources if s.get("cycles") or s.get("batches")}
+    first_ok = {}
     for src, variant, loop, phase, ref in plan:
         seg, ft = smap[src["id"]]
         sid = src["id"]
         versions, refresh = src.get("versions", False), src.get("refresh", False)
         sd = seg_date[seg]
         sdt = sd.strftime("%Y%m%d")
+        is_first = first_variant.get(sid) == variant
 
         def report(status, detail="", upload_id=None):
+            if is_first:
+                first_ok[sid] = status in ("archived", "have")
             counts[status] = counts.get(status, 0) + 1
             eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status=status, detail=detail[:480], upload_id=upload_id,
                      trade_date=sdt)
@@ -199,6 +206,10 @@ def main():
 
         if seg in seg_skip:
             report("not_due", seg_skip[seg])
+            continue
+        if sid in first_variant and not is_first and not first_ok.get(sid, False):
+            first = first_variant[sid].split("=")[-1]
+            report("not_due", f"waiting for {'batch ' if src.get('batches') else ''}{first} - later files come only after it")
             continue
         if not due(phase, sd, now, trigger):
             report("not_due", f"end-of-day file - not checked before {EOD_NOT_BEFORE} IST")

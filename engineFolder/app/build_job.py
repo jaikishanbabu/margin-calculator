@@ -124,6 +124,62 @@ def classify(e):
     return "error"
 
 
+FALLBACK_DAYS = 2                     # a reference file may be at most this many trading days older than expected
+NO_FALLBACK = ("span", "var")         # risk files: always from the trade date (the loader asks for them exactly)
+
+
+def _is_price(key):
+    return "bhavcopy" in key or "settlement" in key
+
+
+def _ddmm(iso):
+    return f"{iso[8:10]}-{iso[5:7]}"
+
+
+def check_reference_age(loader_key, info, data_dir):
+    """Reference files (contract/security master, lots, ELM/exposure, ban list, surveillance lists) may come
+    from up to FALLBACK_DAYS trading days before the day they are expected for, when the exchange has not
+    published that day's copy. SPAN, VaR and prices never fall back. Sets info["fallback_inputs"];
+    raises MissingFile when a required reference file is older than that."""
+    import loader as L
+    from loader.files import MissingFile
+    from loader.nfo import previous_trading_day
+    mod = L.SEGMENTS[loader_key]
+    cal_seg = getattr(mod, "SEGMENT", loader_key)
+    anchor = next((info.get(f"{k}_trade_date") for k in NO_FALLBACK if info.get(f"{k}_trade_date")), None)
+    if not anchor:
+        return
+    wants = getattr(mod, "WANTS", {})
+    notes, too_old = [], []
+    for k in sorted(info):
+        if not k.endswith("_trade_date") or k == "trade_date":
+            continue
+        key = k[:-len("_trade_date")]
+        day = info[k]
+        if key in NO_FALLBACK or _is_price(key) or not day:
+            continue
+        expected = info.get("master_expected_date") if key == "contract_master" and info.get("master_expected_date") \
+            else anchor
+        if day >= expected:
+            continue
+        allowed, d = [], expected
+        for _ in range(FALLBACK_DAYS):
+            d = previous_trading_day(data_dir, d, cal_seg)
+            allowed.append(d)
+        label = key.replace("_", " ")
+        if day >= allowed[-1]:
+            notes.append(f"{label} from {_ddmm(day)} ({_ddmm(expected)} not published)")
+        else:
+            w = wants.get(key)
+            (too_old if (w is None or w.required) else notes).append(
+                f"{label} from {_ddmm(day)} - {_ddmm(expected)} and the {FALLBACK_DAYS} trading days before it "
+                f"are missing" + ("" if (w is None or w.required) else " (optional, used anyway)"))
+    if too_old:
+        raise MissingFile("; ".join(too_old))
+    if notes:
+        info["fallback_inputs"] = "; ".join(notes)
+
+
 def build_one(loader_key, basis, data_dir, out_dir, today, log):
     """Run the vendored loader for one basis. Returns (db_path, info)."""
     import loader as L
@@ -139,6 +195,7 @@ def build_one(loader_key, basis, data_dir, out_dir, today, log):
             from loader.files import MissingFile
             raise MissingFile(f"no {kind} files for {loader_key}")
         info = L.load_segment(loader_key, data_dir, db_dir, on_date=day, log=log, force=True)
+    check_reference_age(loader_key, info, data_dir)
     if hasattr(mod, "describe"):
         info["describe"] = mod.describe(info)
     return db_dir / f"{loader_key}.sqlite", info
@@ -264,12 +321,13 @@ def content_key(uin, rules, basis, info):
 
 
 def describe(info):
+    extra = f" - {info['fallback_inputs']}" if info.get("fallback_inputs") else ""
     if info.get("describe"):
-        return str(info["describe"])
+        return str(info["describe"]) + extra
     cyc = info.get("span_cycle")
     return f"SPAN {cyc} of {info.get('span_business_date') or info.get('trade_date')}" + \
         (f" (created {info['span_created']})" if info.get("span_created") else "") + \
-        (" - STALE" if str(info.get("bod_stale")) == "1" else "")
+        (" - STALE" if str(info.get("bod_stale")) == "1" else "") + extra
 
 
 def _report_failure(eng, run_id, seg, basis, fp, files, names, rules, kind, msg):

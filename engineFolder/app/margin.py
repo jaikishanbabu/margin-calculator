@@ -103,7 +103,8 @@ def _data(snap, fallback, segment):
     return {"segment": segment, "basis": snap["basis"], "trade_date": snap.get("trade_date"),
             "span_day": snap.get("span_day"), "span_cycle": snap.get("span_cycle"), "span_created": snap.get("span_created"),
             "snapshot_id": snap["id"], "fallback": fallback,
-            "stale": str((snap.get("info") or {}).get("bod_stale")) == "1"}
+            "stale": str((snap.get("info") or {}).get("bod_stale")) == "1",
+            "older_files": (snap.get("info") or {}).get("fallback_inputs") or ""}
 
 
 def _validated(segment, snap):

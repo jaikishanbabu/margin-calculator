@@ -472,6 +472,7 @@
         pill(word, kind)));
       if (!r.has_parser) { box.append(card); continue; }
       if (r.in_use && r.message) card.append(el("p", { class: "rd-note warn" }, r.message));
+      if (r.older_files) card.append(el("p", { class: "rd-note warn" }, r.older_files));
 
       // basis toggle (SuperAdmin) - only for segments with both bases
       if (r.bases.length > 1) {

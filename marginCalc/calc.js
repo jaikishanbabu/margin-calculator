@@ -149,6 +149,7 @@
     box.append(el("span", { class: "badge " + (meta.validated ? "ok" : "warn"), title: meta.validation_note || "" },
       meta.validated ? (SEG === "NSECM" && n ? `Validated (${n} Dhan baskets)` : "Validated against brokers") : "Not validated"));
     if (d.stale) box.append(el("span", { class: "badge warn" }, "Today's start-of-day file isn't out yet"));
+    if (d.older_files) box.append(el("span", { class: "badge warn", title: d.older_files }, "Some reference files are from an earlier day"));
   }
 
   // ---------------------------------------------------------------- the add form

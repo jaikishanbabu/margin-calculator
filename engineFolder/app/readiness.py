@@ -51,7 +51,8 @@ def _snap(r, full=False):
     if not full:
         info = r.get("info") or {}
         r["info"] = {k: info.get(k) for k in ("bod_stale", "bod_note", "span_settlement", "span_contracts",
-                                                 "contracts", "master_stale", "var_batch", "describe") if k in info}
+                                                 "contracts", "master_stale", "var_batch", "describe",
+                                                 "fallback_inputs") if k in info}
     return r
 
 
@@ -144,6 +145,9 @@ def readiness():
                 stale.append(f"newer files ({newest}) not built yet")
             row["status"] = "stale" if stale else ("fallback" if fallback else "ready")
             row["message"] = "; ".join(stale) or fallback or ""
+            older = (use.get("info") or {}).get("fallback_inputs")
+            if older:
+                row["older_files"] = f"Using older reference files: {older}"
             if chosen_last and chosen_last["status"] == "failed" and chosen_last["id"] > (use or {}).get("id", 0):
                 row["warning"] = f"Last rebuild failed ({chosen_last.get('error_kind')}): {chosen_last.get('message')}"
         rows.append(row)
