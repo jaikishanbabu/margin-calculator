@@ -116,3 +116,10 @@ button.link{background:none;border:0;color:var(--primary);font-weight:600;font-s
 .legs-table .tr span:first-child{overflow-wrap:anywhere}
 @media (max-width:560px){.card{padding:18px 14px}.wrap{padding-left:12px;padding-right:12px}
   .legs-table .tr{grid-template-columns:1.8fr 1fr 1fr 1fr;padding:8px 8px;font-size:12px}}
+/* market tabs + exchange */
+.ex-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:-4px 0 18px}
+.ex-pick{flex-direction:row;align-items:center;gap:10px;font-size:13px}
+.ex-pick select{width:auto;min-width:200px;height:38px}
+.hint{font-size:12.5px;color:var(--faint)}
+.soon{max-width:640px;margin-bottom:24px}
+.soon p{line-height:1.55}

@@ -5,9 +5,26 @@
 //   POST /api/margin                               the basket's margin
 (function () {
   const API = (window.MARGIN_API_BASE || "").replace(/\/$/, "");
-  const SEG = "NFO";
   const $ = s => document.querySelector(s);
-  const STORE = "mc_basket_v1";
+  // Markets and their exchanges. live: margins are served (validated against brokers); the rest
+  // are listed but greyed out until each passes its own validation.
+  const MARKETS = {
+    fo: { name: "Futures & Options", exchanges: [
+      { ex: "NSE", seg: "NFO", label: "NSE", live: true },
+      { ex: "BSE", seg: "BFO", label: "BSE" },
+      { ex: "CDS", seg: "CDS", label: "NSE Currency" },
+      { ex: "MCX", seg: "MCX", label: "MCX (commodities)" }] },
+    cash: { name: "Cash", exchanges: [
+      { ex: "NSE", seg: "NSECM", label: "NSE" },
+      { ex: "BSE", seg: "BSECM", label: "BSE" }] },
+  };
+  const POPULAR = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "SENSEX", "BANKEX", "SENSEX50",
+                   "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "AXISBANK", "KOTAKBANK", "ITC", "LT"];
+  const params = new URLSearchParams(location.search);
+  let tab = MARKETS[params.get("tab")] ? params.get("tab") : "fo";
+  let exch = MARKETS[tab].exchanges.find(x => x.ex === (params.get("ex") || "").toUpperCase()) || MARKETS[tab].exchanges[0];
+  let SEG = exch.seg;
+  const storeKey = () => `mc_basket_v2_${SEG}`;
 
   function el(tag, attrs, ...kids) {
     const e = document.createElement(tag);
@@ -40,12 +57,58 @@
   // ---------------------------------------------------------------- state
   let meta = null, chain = null;                   // chain: contracts of the instrument being added
   let basket = [];
-  try { basket = JSON.parse(localStorage.getItem(STORE) || "[]").filter(l => l && l.symbol && l.expiry); } catch (_) { basket = []; }
-  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(basket)); } catch (_) { /* private mode */ } };
+  function loadBasket() {
+    try {
+      const old = localStorage.getItem("mc_basket_v1");           // first version kept one NSE F&O basket
+      if (old && !localStorage.getItem("mc_basket_v2_NFO")) localStorage.setItem("mc_basket_v2_NFO", old);
+      basket = JSON.parse(localStorage.getItem(storeKey()) || "[]").filter(l => l && l.symbol && l.expiry);
+    } catch (_) { basket = []; }
+  }
+  const save = () => { try { localStorage.setItem(storeKey(), JSON.stringify(basket)); } catch (_) { /* private mode */ } };
   let type = "CE", side = "S";
 
   // ---------------------------------------------------------------- start
+  // ---------------------------------------------------------------- market tabs + exchange
+  function drawPicker() {
+    document.querySelectorAll(".seg-tabs .seg").forEach(b => {
+      const on = b.dataset.tab === tab; b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on));
+    });
+    const sel = $("#exchange"); sel.textContent = "";
+    for (const x of MARKETS[tab].exchanges)
+      sel.append(el("option", { value: x.ex, selected: x === exch, disabled: !x.live }, x.label + (x.live ? "" : " — coming soon")));
+    $("#exHint").textContent = exch.live ? "" : "Coming after it passes validation against brokers";
+    $("#lead").textContent = tab === "fo"
+      ? "SPAN and exposure margin for a basket of futures and options, worked out from the clearing corporation's own risk files — with hedge benefits across the basket."
+      : "VaR and exposure margin for buying or selling shares, worked out from the exchange's daily VaR file for each stock.";
+    const q = new URLSearchParams({ tab, ex: exch.ex });
+    history.replaceState(null, "", `${location.pathname}?${q}`);
+  }
+
+  function switchTo(newTab, newEx) {
+    tab = newTab;
+    const list = MARKETS[tab].exchanges;
+    exch = list.find(x => x.ex === newEx && x.live) || list.find(x => x.live) || list[0];
+    SEG = exch.seg; meta = null; chain = null;
+    drawPicker(); boot();
+  }
+  document.querySelectorAll(".seg-tabs .seg").forEach(b => b.addEventListener("click", () => { if (b.dataset.tab !== tab) switchTo(b.dataset.tab, exch.ex); }));
+  $("#exchange").addEventListener("change", ev => switchTo(tab, ev.target.value));
+
+  function showSoon() {
+    $("#boot").classList.add("hidden"); $("#app").classList.add("hidden"); $("#unavailable").classList.add("hidden");
+    const box = $("#soon"); box.classList.remove("hidden"); box.textContent = "";
+    const live = Object.values(MARKETS).flatMap(m => m.exchanges.filter(x => x.live).map(x => `${m.name} · ${x.label}`));
+    box.append(el("h2", {}, `${MARKETS[tab].name} on ${exch.label}: coming soon`),
+      el("p", { class: "muted" }, "Margins appear here once this segment's calculations match broker figures on its own test baskets — we don't show figures that haven't been checked."),
+      el("p", { class: "muted" }, "Available now: " + live.join(", ") + "."));
+  }
+
   async function boot() {
+    $("#soon").classList.add("hidden"); $("#unavailable").classList.add("hidden"); $("#app").classList.add("hidden");
+    if (!exch.live) return showSoon();
+    $("#boot").classList.remove("hidden"); $("#bootText").textContent = "Loading today's risk data…";
+    loadBasket();
+    $("#fSymbol").value = ""; $("#symbolList").textContent = "";
     const slow = setTimeout(() => { $("#bootText").textContent = "Waking the server… on the free plan this can take up to a minute."; }, 4000);
     try { meta = await api(`/api/margin/meta?segment=${SEG}`); }
     catch (e) {
@@ -61,8 +124,10 @@
     $("#boot").classList.add("hidden"); $("#app").classList.remove("hidden");
     drawDataLine();
     const dl = $("#symbolList");
-    for (const s of meta.symbols) dl.append(el("option", { value: s.symbol }, s.kind === "INDEX" ? "Index" : "Stock"));
-    if (!basket.length) $("#fSymbol").value = "NIFTY";
+    const rank = s => { const i = POPULAR.indexOf(s.symbol); return i < 0 ? 1000 + (s.kind === "INDEX" ? 0 : 500) : i; };
+    const syms = [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
+    for (const s of syms) dl.append(el("option", { value: s.symbol }, s.kind === "INDEX" ? "Index" : "Stock"));
+    if (!basket.length || !$("#fSymbol").value) $("#fSymbol").value = syms.length ? syms[0].symbol : "";
     await pickSymbol();
     drawBasket(); calc();
   }
@@ -110,7 +175,7 @@
     if (!ks.length) { sel.disabled = true; $("#fAdd").disabled = true; return; }
     let best = ks[Math.floor(ks.length / 2)];
     if (chain.ref) best = ks.reduce((a, b) => Math.abs(b - chain.ref) < Math.abs(a - chain.ref) ? b : a, ks[0]);
-    for (const k of ks) sel.append(el("option", { value: k, selected: k === best }, strikeTxt(k) + (k === best ? "  (near the money)" : "")));
+    for (const k of ks) sel.append(el("option", { value: k, selected: k === best }, strikeTxt(k) + (k === best ? " · ATM" : "")));
     sel.disabled = false; $("#fAdd").disabled = false;
   }
 
@@ -206,5 +271,6 @@
       `SPAN ${d.span_cycle || ""} of ${day(d.span_day || d.trade_date)}` + (d.span_created ? `, created ${d.span_created}` : "") + "."));
   }
 
+  drawPicker();
   boot();
 })();
