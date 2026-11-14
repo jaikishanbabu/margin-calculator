@@ -10,13 +10,13 @@
   // are listed but greyed out until each passes its own validation.
   const MARKETS = {
     fo: { name: "Futures & Options", exchanges: [
-      { ex: "NSE", seg: "NFO", label: "NSE", live: true },
-      { ex: "BSE", seg: "BFO", label: "BSE" },
+      { ex: "NSE", seg: "NFO", label: "NSE F&O", live: true },
+      { ex: "BSE", seg: "BFO", label: "BSE F&O" },
       { ex: "CDS", seg: "CDS", label: "NSE Currency" },
-      { ex: "MCX", seg: "MCX", label: "MCX (commodities)" }] },
+      { ex: "MCX", seg: "MCX", label: "MCX Commodity" }] },
     cash: { name: "Cash", exchanges: [
-      { ex: "NSE", seg: "NSECM", label: "NSE" },
-      { ex: "BSE", seg: "BSECM", label: "BSE" }] },
+      { ex: "NSE", seg: "NSECM", label: "NSE Cash" },
+      { ex: "BSE", seg: "BSECM", label: "BSE Cash" }] },
   };
   const POPULAR = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "SENSEX", "BANKEX", "SENSEX50",
                    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "AXISBANK", "KOTAKBANK", "ITC", "LT"];
@@ -97,8 +97,8 @@
   function showSoon() {
     $("#boot").classList.add("hidden"); $("#app").classList.add("hidden"); $("#unavailable").classList.add("hidden");
     const box = $("#soon"); box.classList.remove("hidden"); box.textContent = "";
-    const live = Object.values(MARKETS).flatMap(m => m.exchanges.filter(x => x.live).map(x => `${m.name} · ${x.label}`));
-    box.append(el("h2", {}, `${MARKETS[tab].name} on ${exch.label}: coming soon`),
+    const live = Object.values(MARKETS).flatMap(m => m.exchanges.filter(x => x.live).map(x => x.label));
+    box.append(el("h2", {}, `${exch.label}: coming soon`),
       el("p", { class: "muted" }, "Margins appear here once this segment's calculations match broker figures on its own test baskets — we don't show figures that haven't been checked."),
       el("p", { class: "muted" }, "Available now: " + live.join(", ") + "."));
   }
