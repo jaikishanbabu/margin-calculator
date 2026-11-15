@@ -130,7 +130,7 @@ button.link{background:none;border:0;color:var(--primary);font-weight:600;font-s
 .f-symbol { position: relative; }
 .suggest { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 30; max-height: 280px; overflow-y: auto;
   background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(20, 24, 40, .14);
-  -webkit-overflow-scrolling: touch; font-weight: 400; }
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; font-weight: 400; }
 .suggest.hidden { display: none; }
 .suggest .s-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer;
   border-bottom: 1px solid var(--line); color: var(--text); }

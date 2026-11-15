@@ -60,9 +60,9 @@
   let foList = [], cashList = [];
   const MIN_CHARS = 3, MAX_SHOWN = 40;
   function suggest(input, box, items, onPick) {
-    let rows = [], at = -1;
+    let rows = [], at = -1, inList = false;
     const close = () => { box.classList.add("hidden"); box.textContent = ""; input.setAttribute("aria-expanded", "false"); rows = []; at = -1; };
-    const choose = r => { input.value = r.symbol; close(); onPick(r); };
+    const choose = r => { inList = false; input.value = r.symbol; close(); onPick(r); };
     const mark = () => [...box.children].forEach((c, i) => c.classList.toggle("on", i === at));
     function open() {
       const q = input.value.trim().toUpperCase();
@@ -75,8 +75,7 @@
       for (const r of rows) {
         const i = q.length ? r.symbol.indexOf(q) : -1;
         box.append(el("div", { class: "s-row", role: "option",
-          // pointerdown + preventDefault: pick before the box loses focus (and closes the list)
-          onpointerdown: ev => { ev.preventDefault(); choose(r); } },
+          onclick: () => choose(r) },                    // click = a tap; a drag scrolls the list instead
           el("span", { class: "s-sym" }, r.symbol.slice(0, i), el("b", {}, r.symbol.slice(i, i + q.length)), r.symbol.slice(i + q.length)),
           el("span", { class: "s-tag" }, r.tag || "")));
       }
@@ -84,7 +83,14 @@
     }
     input.addEventListener("input", open);
     input.addEventListener("focus", () => { if (input.value.trim().length >= MIN_CHARS && !items().some(r => r.symbol === input.value.trim().toUpperCase())) open(); });
-    input.addEventListener("blur", () => setTimeout(close, 150));
+    // Touching the list (to scroll it) may take focus from the box: keep the list open then; close it on a
+    // touch anywhere else on the page.
+    box.addEventListener("pointerdown", () => { inList = true; });
+    box.addEventListener("mousedown", ev => ev.preventDefault());       // desktop: keep the cursor in the box
+    input.addEventListener("blur", () => setTimeout(() => { if (!inList) close(); }, 200));
+    document.addEventListener("pointerdown", ev => {
+      if (ev.target !== input && !box.contains(ev.target)) { inList = false; close(); }
+    });
     input.addEventListener("keydown", ev => {
       if (box.classList.contains("hidden") || !rows.length) return;
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
