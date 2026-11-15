@@ -240,6 +240,17 @@ def test_nse_cash_is_served_only_once_validated(mx, monkeypatch):
     r = c.post("/api/margin", json=order)
     assert r.status_code == 400 and "validated" in r.json()["error"]
     assert c.get("/api/margin/meta?segment=NSECM").status_code == 503
+    # SuperAdmin preview: only with the SuperAdmin's token AND the preview header; marked not validated
+    pv = dict(mx["sa"], **{"X-Preview": "1"})
+    assert c.post("/api/margin", json=order, headers={"X-Preview": "1"}).status_code == 400
+    assert c.post("/api/margin", json=order, headers=mx["sa"]).status_code == 400
+    assert c.post("/api/margin", json=order, headers=dict(pv, Authorization="Bearer forged")).status_code == 400
+    sp = c.get("/api/margin/segments", headers=pv).json()
+    assert sp["preview"] is True and sp["segments"]["NSECM"] == {"served": True, "validated": False, "preview": True}
+    assert c.get("/api/margin/segments").json()["preview"] is False
+    pm = c.post("/api/margin", json=order, headers=pv).json()
+    assert pm["validated"] is False and pm["validation_note"].startswith("SuperAdmin preview")
+    assert c.get("/api/margin/meta?segment=NSECM", headers=pv).json()["validated"] is False
     c.post(f"/api/fetcher/runs/{rid}/finish", json={"status": "done"}, headers=mx["job"])
 
     rv = mx["c"].post("/api/admin/validation/run", json={"segment": "NSECM"}, headers=mx["sa"]).json()["run"]["id"]
@@ -257,3 +268,19 @@ def test_nse_cash_is_served_only_once_validated(mx, monkeypatch):
     assert m["validated"] is True and m["data"]["span_cycle"] == "3"
     bad = c.post("/api/margin", json={"segment": "NSECM", "positions": [{"symbol": "RELIANCE", "side": "buy", "qty": 0}]})
     assert bad.status_code == 400 and "quantity" in bad.json()["error"]
+
+
+def test_nse_runner_picks_backfilled_batches_by_schedule(tmp_path):
+    import sys as _s
+    from datetime import datetime as _dt
+    _s.path.insert(0, str(Path(__file__).resolve().parent.parent / "validation"))
+    from run_nse import schedule_batches
+    for d, n in (("2026-10-26", range(1, 7)), ("2026-10-27", range(1, 7))):
+        f = tmp_path / "EQ" / "var" / d
+        f.mkdir(parents=True)
+        for b in n:
+            (f / f"C_VAR1_{d[8:]}{d[5:7]}{d[:4]}_{b}.DAT").write_text("x")
+    early = [(c.day, c.cycle) for c in schedule_batches(tmp_path, _dt(2026, 10, 27, 4, 11))]
+    assert early == [("2026-10-27", "1")] + [("2026-10-26", str(b)) for b in range(6, 0, -1)]
+    late = [(c.day, c.cycle) for c in schedule_batches(tmp_path, _dt(2026, 10, 27, 16, 0))]
+    assert late[:4] == [("2026-10-27", "4"), ("2026-10-27", "3"), ("2026-10-27", "2"), ("2026-10-27", "1")]

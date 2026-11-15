@@ -27,10 +27,30 @@ def data_inventory(data):
     return out
 
 
+def schedule_batches(data_dir, at):
+    """VaR batches a broker could have had at `at`, by NSE's schedule (exfetch_sources: batch 1 start of day,
+    2-4 intraday, 5-6 end of day) - for files downloaded later, whose fetch times say nothing about when
+    NSE published them. Order: the capture day's (batch 1; 2-4 only after the close), then every batch
+    of the previous day on disk, newest first."""
+    import re
+    from engine.match import Cycle
+    base = Path(data_dir) / "EQ" / "var"
+    day = at.date().isoformat()
+    folders = sorted(p.name for p in base.iterdir() if p.name[:2] == "20" and p.name <= day) if base.is_dir() else []
+    out = []
+    for d in reversed(folders[-2:]):
+        nums = sorted({int(m[1]) for p in (base / d).glob("C_VAR1_*_*.DAT") if (m := re.search(r"_(\d)\.DAT$", p.name))},
+                      reverse=True)
+        if d == day:
+            nums = [n for n in nums if n == 1 or (n <= 4 and at.strftime("%H:%M") >= "15:30")]
+        out += [Cycle(d, str(n), "") for n in nums]
+    return out
+
+
 def run_baskets(t):
     import yaml
     from engine import CashOrder
-    from engine.match import CycleDatabases, match
+    from engine.match import CycleDatabases, candidate_batches, match
     path = t.ROOT / "tests/fixtures/nse_baskets.yaml"
     dbs = CycleDatabases(t.DATA, t._TMP / "cycles", segment="NSE")
     rows = []
@@ -44,7 +64,12 @@ def run_baskets(t):
             want.update({f"leg{i}.{k}": float(v) for k, v in o["expected"].items()})
         try:
             orders = [t.CashOrder(o["symbol"], o["side"], o["qty"], o["price"]) for o in b["orders"]]
-            m = match(dbs, datetime.strptime(str(b["captured_at"]), "%Y-%m-%d %H:%M"), orders, want)
+            at = datetime.strptime(str(b["captured_at"]), "%Y-%m-%d %H:%M")
+            cands = candidate_batches(t.DATA, at)
+            if not cands:                      # downloaded after the quote: go by NSE's batch schedule
+                cands = schedule_batches(t.DATA, at)
+                row["batches_by"] = "NSE's batch schedule (files downloaded later)"
+            m = match(dbs, at, orders, want, candidates=cands)
         except Exception as e:
             rows.append(dict(row, status="error", detail=f"{type(e).__name__}: {e}"[:600], want=want))
             continue

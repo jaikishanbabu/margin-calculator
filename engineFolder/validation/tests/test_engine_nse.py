@@ -6,6 +6,7 @@ Expected values are read straight from the raw VaR / master / bhavcopy rows here
 not from the loader or engine.
 """
 import csv
+import re
 import shutil
 import sqlite3
 import sys
@@ -59,7 +60,9 @@ def close(a, b, tol=0.011):
 def test_load_info_and_batches():
     info = eng("3").load_info
     assert (info["var_date"], info["var_batch"]) == ("2026-10-26", 3)
-    assert info["var_amr_mismatches"] == 0 and info["var_fetched_at"].startswith("2026-10-26T")
+    # var_fetched_at is when the file was downloaded - for archive downloads that's long after 26 Oct
+    # (approved change, see validation/VALIDATION_CHANGES.md)
+    assert info["var_amr_mismatches"] == 0 and re.match(r"\d{4}-\d{2}-\d{2}T", info["var_fetched_at"])
     assert info["var_dropped_six_digit"] > 8000               # BSE scrip codes in the interoperable file
     # batch 1's header has no batch field: taken from the file name
     assert eng("1").load_info["var_batch"] == 1 and eng("6").load_info["var_batch"] == 6
@@ -132,14 +135,28 @@ def test_t2t_asm_gsm_and_no_var():
     e = eng()
     be = e.margin([CashOrder("AARTISURF", "buy", 100)])["legs"][0]
     assert be["effective_pct"] == 100 and be["leverage"] == 1 and any("trade-for-trade" in w for w in be["warnings"])
-    adv = e.security("ADVANCE")                                 # short-term ASM stage I
-    rule = max(1.5 * (adv["var_pct"] + adv["elm_pct"]), 40)     # of VaR + ELM: AMR's ad hoc is NSE's ASM add-on
-    leg = e.margin([CashOrder("ADVANCE", "buy", 100)])["legs"][0]
-    assert leg["effective_pct"] == round(min(100, max(adv["amr"], rule)), 2) and any("short-term ASM" in w for w in leg["warnings"])
-    lt = e.conn.execute("SELECT symbol FROM security WHERE asm_long IS NOT NULL AND amr < 100 AND close > 0").fetchone()
-    assert e.margin([CashOrder(lt[0], "buy", e.security(lt[0])["lot"])])["legs"][0]["effective_pct"] == 100
-    g = e.margin([CashOrder("AQYLON", "buy", 1000)])["legs"][0]
-    assert any("GSM" in w for w in g["warnings"]) and g["effective_pct"] == e.security("AQYLON")["amr"]
+    # NSE publishes only its current ASM / GSM lists, so October's can't be downloaded: the rules are checked
+    # on stocks that are on the lists loaded (approved change, see validation/VALIDATION_CHANGES.md;
+    # was ADVANCE for short-term ASM and AQYLON for GSM)
+    def listed(col, extra=""):
+        r = e.conn.execute(f"SELECT symbol FROM security WHERE {col} IS NOT NULL {extra} AND amr < 100 AND close > 0 "
+                           "AND series = 'EQ' AND is_primary AND gsm IS NULL AND series NOT IN ('BE', 'BZ') ORDER BY symbol").fetchone()
+        return r[0] if r else None
+    st = listed("asm_short", "AND asm_long IS NULL")
+    if st:
+        adv = e.security(st)                                    # short-term ASM
+        rule = max(1.5 * (adv["var_pct"] + adv["elm_pct"]), 40)     # of VaR + ELM: AMR's ad hoc is NSE's ASM add-on
+        leg = e.margin([CashOrder(st, "buy", adv["lot"] or 1)])["legs"][0]
+        assert leg["effective_pct"] == round(min(100, max(adv["amr"], rule)), 2) and any("short-term ASM" in w for w in leg["warnings"])
+    lt = listed("asm_long")
+    if lt:
+        assert e.margin([CashOrder(lt, "buy", e.security(lt)["lot"] or 1)])["legs"][0]["effective_pct"] == 100
+    gs = e.conn.execute("SELECT symbol FROM security WHERE gsm IS NOT NULL AND amr IS NOT NULL AND close > 0 "
+                       "AND is_primary ORDER BY symbol").fetchone()
+    if gs:
+        g = e.margin([CashOrder(gs[0], "buy", e.security(gs[0])["lot"] or 1)])["legs"][0]
+        assert any("GSM" in w for w in g["warnings"]) and g["effective_pct"] == e.security(gs[0])["amr"]
+    assert st and lt and gs, "ASM / GSM lists not loaded"
     k = e.margin([CashOrder("KHAZANCHI", "buy", 100, price=700)])["legs"][0]
     assert k["effective_pct"] == 100 and k["amr_pct"] is None and any("no VaR rate" in w for w in k["warnings"])
 

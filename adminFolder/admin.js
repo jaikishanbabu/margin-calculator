@@ -560,6 +560,9 @@
     });
     const actions = el("div", { class: "rd-actions" }, run);
     if (L) actions.append(el("button", { type: "button", class: "secondary small", onclick: () => showReport() }, vrep ? "Refresh report" : "Show report"));
+    if (vSeg === "NSECM" && !v.validated && me && me.role === "superadmin")     // same tab: keeps the login token
+      actions.append(el("button", { type: "button", class: "secondary small",
+        onclick: () => { location.href = "/calculator/?tab=cash&ex=NSE&preview=1"; } }, "Try it on the calculator (preview)"));
     box.append(actions, el("div", { id: "vReport" }));
     if (vrep) drawReport();
   }

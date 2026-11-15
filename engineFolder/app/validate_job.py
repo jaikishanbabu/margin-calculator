@@ -42,6 +42,29 @@ def inventory(segment):
     return data_inventory(DATA)
 
 
+def load_surveillance(eng, item):
+    """NSE publishes only its current ASM / GSM lists, so October's can't be downloaded. The newest copies
+    the engine has archived are put with the October files (the report says so)."""
+    import shutil
+    r = eng.call("GET", "/api/fetcher/build/inputs?segment=NSECM")
+    files = r.json().get("files", []) if r.status_code == 200 else []
+    folder = DATA / "EQ" / "surveillance" / PLANS["NSECM"]["from"]
+    got = []
+    for name in ("nse_asm.json", "nse_gsm.json"):
+        f = max((x for x in files if x["filename"] == name), key=lambda x: (x["trade_date"], x["id"]), default=None)
+        if not f:
+            continue
+        d = eng.call("GET", f"/api/fetcher/uploads/{f['id']}/original", timeout=120)
+        if d.status_code == 200:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(d.content)
+            got.append(f"{name.split('_')[1][:3].upper()} of {f['trade_date'][6:8]}-{f['trade_date'][4:6]}")
+    note = ("ASM / GSM: " + ", ".join(got) + " lists (NSE publishes only current lists)") if got else \
+        "ASM / GSM lists: none archived yet"
+    item("validate:surveillance", "archived" if got else "failed", note)
+    return note
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", type=int, required=True)
@@ -77,6 +100,10 @@ def main():
          (f"missing {', '.join(still)} - " if still else "") +
          f"{'VaR batches' if seg == 'NSECM' else 'SPAN cycles'} on disk: {have}")
 
+    surv_note = ""
+    if seg == "NSECM":
+        surv_note = load_surveillance(eng, item)
+
     item("validate:run", "running", "running the engine tests and the broker baskets")
     out = ROOT / "validation" / "report.json"
     env = dict(os.environ, PYTHONPATH=str(ROOT))
@@ -89,6 +116,8 @@ def main():
         return
     report = json.loads(out.read_text())
     report["code_version"] = os.getenv("GITHUB_SHA", "local")[:40]
+    if surv_note:
+        report["surveillance_note"] = surv_note
     s = report["summary"]
     r = eng.call("POST", f"/api/fetcher/runs/{rid}/validation", json={"segment": seg, "report": report}, timeout=120)
     if r.status_code != 201:
