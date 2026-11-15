@@ -24,34 +24,25 @@ jobs:
               except Exception as e:
                   return getattr(e, "code", "ERR"), str(e)[:80], b""
           get("https://www.bseindia.com/")
-          for page in ["https://www.bseindia.com/markets/Equity/EQReports/margin.aspx",
-                       "https://www.bseindia.com/markets/equity/EQReports/VaRELMargin.aspx",
-                       "https://www.icclindia.com/riskmgmt/Margin.aspx"]:
-              st, ct, b = get(page)
-              t = b.decode("utf-8", "replace")
-              print("\n=== PAGE", page, st, ct, len(b))
-              for m in sorted(set(re.findall(r'(?:href|src|action|onclick)\s*=\s*"([^"]+)"', t))):
-                  if re.search(r"(?i)var|elm|margin|download|\.zip|\.csv|\.txt|postback|api", m):
-                      print("  link:", html.unescape(m)[:220])
-              for m in sorted(set(re.findall(r"(?i)https?://[^\s'\"<>]*(?:var|elm|margin)[^\s'\"<>]*", t)))[:40]:
-                  print("  url:", m[:220])
-              for m in sorted(set(re.findall(r"(?i)[A-Za-z0-9_]*VARELM[A-Za-z0-9_.{}]*", t)))[:20]:
-                  print("  name:", m)
-              for m in re.findall(r'(?i)<input[^>]+type="?(?:submit|image|button)[^>]*>', t)[:20]:
-                  print("  input:", m[:220])
-              for m in re.findall(r'(?i)<a[^>]*>[^<]*(?:download|VaR)[^<]*</a>', t)[:20]:
-                  print("  anchor:", html.unescape(m)[:260])
-          for d in ["131126", "121126"]:
-              dd, mm, yy = d[:2], d[2:4], d[4:]
-              for u in [f"https://www.bseindia.com/downloads/ICCL00_VARELMAM_{d}.csv",
-                        f"https://www.bseindia.com/downloads/ICCL00_VARELMAM_{d}.zip",
-                        f"https://www.bseindia.com/BSEDATA/margins/ICCL00_VARELMAM_{d}.csv",
-                        f"https://www.bseindia.com/BSEDATA/margins/VAR{d}.zip",
-                        f"https://www.bseindia.com/BSEDATA/margins/VAR{d}.csv",
-                        f"https://www.bseindia.com/BSEDATA/margins/VAR_ELM_{d}.csv",
-                        f"https://www.bseindia.com/download/BhavCopy/Equity/VAR{d}.zip",
-                        f"https://www.icclindia.com/downloads/ICCL00_VARELMAM_{d}.csv",
-                        f"https://www.icclindia.com/DownloadFiles/ICCL00_VARELMAM_{d}.csv"]:
+          import csv, io, collections
+          st, ct, b = get("https://www.bseindia.com/BSEDATA/margins/ICCL00_VARELMAM_131126.csv")
+          t = b.decode("utf-8", "replace").splitlines()
+          print("ROWS", len(t)); print("HEADER", t[0])
+          for l in t[1:6]: print("ROW", l)
+          rows = list(csv.DictReader(io.StringIO("\n".join(t))))
+          for k in rows[0]:
+              vals = collections.Counter(r[k] for r in rows)
+              print("COL", repr(k), "distinct", len(vals), "top", vals.most_common(6))
+          for sym in ("RELIANCE", "TCS", "HDFCBANK", "INFY", "AARTISURF", "KHAZANCHI"):
+              for r in rows:
+                  if sym in (r.get("Security Name") or "").upper().replace(" ", "") or r.get("Security Code") in ("500325",):
+                      print("SYM", sym, r); break
+          for d in ["131126", "141126", "161126"]:
+              for n in ["00", "01", "02", "03", "04", "05", "Final", "FINAL"]:
+                  u = f"https://www.bseindia.com/BSEDATA/margins/ICCL{n}_VARELMAM_{d}.csv"
                   st, ct, b = get(u)
-                  print("probe", st, ct, len(b), u, b[:80] if st == 200 else "")
+                  print("probe", st, len(b), u, b[:40] if st == 200 else "")
+          for u in ["https://www.bseindia.com/BSEDATA/margins/", "https://www.bseindia.com/BSEDATA/margins/VAR161126.zip",
+                    "https://www.bseindia.com/BSEDATA/margins/ICCL00_VARELMAM_161126.csv"]:
+              st, ct, b = get(u); print("probe", st, ct, len(b), u)
           PY
