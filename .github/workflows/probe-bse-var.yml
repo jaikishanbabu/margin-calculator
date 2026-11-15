@@ -1,0 +1,57 @@
+name: probe-bse-var
+on:
+  push:
+    branches: [probe-bse-var]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe BSE VaR / ELM page and file names
+        run: |
+          python3 - <<'PY'
+          import re, urllib.request, http.cookiejar, html
+          cj = http.cookiejar.CookieJar()
+          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+          H = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+               "Referer": "https://www.bseindia.com/", "Accept": "*/*"}
+          def get(u):
+              try:
+                  r = op.open(urllib.request.Request(u, headers=H), timeout=40)
+                  b = r.read(); return r.status, r.headers.get("content-type"), b
+              except Exception as e:
+                  return getattr(e, "code", "ERR"), str(e)[:80], b""
+          get("https://www.bseindia.com/")
+          for page in ["https://www.bseindia.com/markets/Equity/EQReports/margin.aspx",
+                       "https://www.bseindia.com/markets/equity/EQReports/VaRELMargin.aspx",
+                       "https://www.icclindia.com/riskmgmt/Margin.aspx"]:
+              st, ct, b = get(page)
+              t = b.decode("utf-8", "replace")
+              print("\n=== PAGE", page, st, ct, len(b))
+              for m in sorted(set(re.findall(r'(?:href|src|action|onclick)\s*=\s*"([^"]+)"', t))):
+                  if re.search(r"(?i)var|elm|margin|download|\.zip|\.csv|\.txt|postback|api", m):
+                      print("  link:", html.unescape(m)[:220])
+              for m in sorted(set(re.findall(r"(?i)https?://[^\s'\"<>]*(?:var|elm|margin)[^\s'\"<>]*", t)))[:40]:
+                  print("  url:", m[:220])
+              for m in sorted(set(re.findall(r"(?i)[A-Za-z0-9_]*VARELM[A-Za-z0-9_.{}]*", t)))[:20]:
+                  print("  name:", m)
+              for m in re.findall(r'(?i)<input[^>]+type="?(?:submit|image|button)[^>]*>', t)[:20]:
+                  print("  input:", m[:220])
+              for m in re.findall(r'(?i)<a[^>]*>[^<]*(?:download|VaR)[^<]*</a>', t)[:20]:
+                  print("  anchor:", html.unescape(m)[:260])
+          for d in ["131126", "121126"]:
+              dd, mm, yy = d[:2], d[2:4], d[4:]
+              for u in [f"https://www.bseindia.com/downloads/ICCL00_VARELMAM_{d}.csv",
+                        f"https://www.bseindia.com/downloads/ICCL00_VARELMAM_{d}.zip",
+                        f"https://www.bseindia.com/BSEDATA/margins/ICCL00_VARELMAM_{d}.csv",
+                        f"https://www.bseindia.com/BSEDATA/margins/VAR{d}.zip",
+                        f"https://www.bseindia.com/BSEDATA/margins/VAR{d}.csv",
+                        f"https://www.bseindia.com/BSEDATA/margins/VAR_ELM_{d}.csv",
+                        f"https://www.bseindia.com/download/BhavCopy/Equity/VAR{d}.zip",
+                        f"https://www.icclindia.com/downloads/ICCL00_VARELMAM_{d}.csv",
+                        f"https://www.icclindia.com/DownloadFiles/ICCL00_VARELMAM_{d}.csv"]:
+                  st, ct, b = get(u)
+                  print("probe", st, ct, len(b), u, b[:80] if st == 200 else "")
+          PY
