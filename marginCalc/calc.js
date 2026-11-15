@@ -54,6 +54,47 @@
     } finally { if (--pending <= 0) { pending = 0; $("#topBar").classList.remove("on"); } }
   }
 
+  // ---------------------------------------------------------------- search dropdown
+  // Shows matches under the box once 3 letters are typed: names starting with them first, then names
+  // containing them (each group in the popular-first order of the list). Tap / Enter picks one.
+  let foList = [], cashList = [];
+  const MIN_CHARS = 3, MAX_SHOWN = 40;
+  function suggest(input, box, items, onPick) {
+    let rows = [], at = -1;
+    const close = () => { box.classList.add("hidden"); box.textContent = ""; input.setAttribute("aria-expanded", "false"); rows = []; at = -1; };
+    const choose = r => { input.value = r.symbol; close(); onPick(r); };
+    const mark = () => [...box.children].forEach((c, i) => c.classList.toggle("on", i === at));
+    function open() {
+      const q = input.value.trim().toUpperCase();
+      if (q.length < MIN_CHARS) return close();
+      const all = items();
+      const starts = all.filter(r => r.symbol.startsWith(q)), has = all.filter(r => !r.symbol.startsWith(q) && r.symbol.includes(q));
+      rows = starts.concat(has).slice(0, MAX_SHOWN); at = -1;
+      box.textContent = "";
+      if (!rows.length) box.append(el("div", { class: "s-none" }, `No match for “${q}”`));
+      for (const r of rows) {
+        const i = q.length ? r.symbol.indexOf(q) : -1;
+        box.append(el("div", { class: "s-row", role: "option",
+          // pointerdown + preventDefault: pick before the box loses focus (and closes the list)
+          onpointerdown: ev => { ev.preventDefault(); choose(r); } },
+          el("span", { class: "s-sym" }, r.symbol.slice(0, i), el("b", {}, r.symbol.slice(i, i + q.length)), r.symbol.slice(i + q.length)),
+          el("span", { class: "s-tag" }, r.tag || "")));
+      }
+      box.classList.remove("hidden"); input.setAttribute("aria-expanded", "true");
+    }
+    input.addEventListener("input", open);
+    input.addEventListener("focus", () => { if (input.value.trim().length >= MIN_CHARS && !items().some(r => r.symbol === input.value.trim().toUpperCase())) open(); });
+    input.addEventListener("blur", () => setTimeout(close, 150));
+    input.addEventListener("keydown", ev => {
+      if (box.classList.contains("hidden") || !rows.length) return;
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault(); at = (at + (ev.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length; mark();
+        box.children[at].scrollIntoView({ block: "nearest" });
+      } else if (ev.key === "Enter") { ev.preventDefault(); choose(rows[Math.max(at, 0)]); }
+      else if (ev.key === "Escape") close();
+    });
+  }
+
   // ---------------------------------------------------------------- state
   let meta = null, chain = null;                   // chain: contracts of the instrument being added
   let basket = [];
@@ -111,7 +152,7 @@
     if (!exch.live) return showSoon();
     $("#boot").classList.remove("hidden"); $("#bootText").textContent = "Loading today's risk data…";
     loadBasket();
-    $("#fSymbol").value = ""; $("#symbolList").textContent = "";
+    $("#fSymbol").value = "";
     const slow = setTimeout(() => { $("#bootText").textContent = "Waking the server… on the free plan this can take up to a minute."; }, 4000);
     try { meta = await api(`/api/margin/meta?segment=${SEG}`); }
     catch (e) {
@@ -130,10 +171,9 @@
     $("#addTitle").textContent = cash ? "Add an order" : "Add a position";
     drawDataLine();
     if (cash) { setupCash(); drawBasket(); calc(); return; }
-    const dl = $("#symbolList");
     const rank = s => { const i = POPULAR.indexOf(s.symbol); return i < 0 ? 1000 + (s.kind === "INDEX" ? 0 : 500) : i; };
     const syms = [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
-    for (const s of syms) dl.append(el("option", { value: s.symbol }, s.kind === "INDEX" ? "Index" : "Stock"));
+    foList = syms.map(x => ({ symbol: x.symbol, tag: x.kind === "INDEX" ? "Index" : (x.banned ? "Stock · in ban" : "Stock") }));
     if (!basket.length || !$("#fSymbol").value) $("#fSymbol").value = syms.length ? syms[0].symbol : "";
     await pickSymbol();
     drawBasket(); calc();
@@ -200,6 +240,7 @@
   segmented($("#fSide"), v => { side = v; });
   let symTimer = null;
   $("#fSymbol").addEventListener("input", () => { clearTimeout(symTimer); symTimer = setTimeout(pickSymbol, 350); });
+  suggest($("#fSymbol"), $("#fSymbolList"), () => foList, () => { clearTimeout(symTimer); pickSymbol(); });
   $("#fSymbol").addEventListener("change", () => { clearTimeout(symTimer); pickSymbol(); });
   $("#fExpiry").addEventListener("change", fillStrikes);
 
@@ -217,16 +258,16 @@
   // ---------------------------------------------------------------- cash orders
   let cSide = "buy", cashReady = false;
   function setupCash() {
-    const dl = $("#cashList"); dl.textContent = "";
     const rank = s => { const i = POPULAR.indexOf(s.symbol); return i < 0 ? 1000 : i; };
-    for (const s of [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol)))
-      dl.append(el("option", { value: s.symbol }, [s.series, s.flag].filter(Boolean).join(" · ")));
+    cashList = [...meta.symbols].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol))
+      .map(x => ({ symbol: x.symbol, tag: [x.series, x.flag].filter(Boolean).join(" · ") }));
     if (!$("#cSymbol").value) $("#cSymbol").value = "RELIANCE";
     pickStock();
     if (cashReady) return;
     cashReady = true;
     segmented($("#cSide"), v => { cSide = v; });
     $("#cSymbol").addEventListener("input", pickStock);
+    suggest($("#cSymbol"), $("#cSymbolList"), () => cashList, pickStock);
     $("#cashForm").addEventListener("submit", ev => {
       ev.preventDefault();
       const s = stock(); const qty = parseInt($("#cQty").value, 10);

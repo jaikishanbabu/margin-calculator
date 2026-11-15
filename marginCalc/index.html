@@ -48,8 +48,9 @@
       <h2 id="addTitle">Add a position</h2>
       <form id="legForm" class="leg-form" autocomplete="off">
         <label class="f-symbol">Instrument
-          <input id="fSymbol" list="symbolList" placeholder="NIFTY, BANKNIFTY, RELIANCE…" required spellcheck="false" autocapitalize="characters">
-          <datalist id="symbolList"></datalist>
+          <input id="fSymbol" placeholder="Type 3 letters: NIF, BANK, REL…" required spellcheck="false" autocapitalize="characters"
+                 autocorrect="off" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fSymbolList">
+          <div class="suggest hidden" id="fSymbolList" role="listbox"></div>
         </label>
         <label>Expiry<select id="fExpiry" required disabled></select></label>
         <div class="f-type" role="group" aria-label="Instrument type">
@@ -72,8 +73,9 @@
 
       <form id="cashForm" class="leg-form cash-form hidden" autocomplete="off">
         <label class="f-symbol">Stock
-          <input id="cSymbol" list="cashList" placeholder="RELIANCE, TCS, INFY…" required spellcheck="false" autocapitalize="characters">
-          <datalist id="cashList"></datalist>
+          <input id="cSymbol" placeholder="Type 3 letters: REL, TCS, INF…" required spellcheck="false" autocapitalize="characters"
+                 autocorrect="off" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cSymbolList">
+          <div class="suggest hidden" id="cSymbolList" role="listbox"></div>
         </label>
         <div class="f-side" role="group" aria-label="Buy or sell">
           <span class="lbl">Side</span>
