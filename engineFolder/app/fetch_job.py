@@ -81,6 +81,12 @@ def span_cycle(sid, loop, name):
     return None
 
 
+# Reference files may come from up to FALLBACK_DAYS trading days earlier when the trade date's copy
+# isn't published (the build notes it). SPAN, VaR and prices are always the trade date's own.
+REFERENCE_TYPES = {"contract_master", "security_master", "lot_sizes", "elm", "ban_list", "surveillance"}
+FALLBACK_DAYS = 2
+
+
 def due(src_phase, trade_date, now, trigger):
     if trigger != "auto" or src_phase != "eod":
         return True
@@ -99,7 +105,7 @@ def segment_dates(d, today, trigger, segments, trading):
         ex = holidays.EXCHANGE_OF.get(seg, "NSE")
         sd = d
         if not trading(ex, d):
-            if d > today:
+            if d > today or trigger != "auto":     # evening run, or a manual run on a weekend/holiday
                 for _ in range(10):
                     sd += timedelta(days=1)
                     if trading(ex, sd):
@@ -160,9 +166,10 @@ def main():
     seg_date, seg_skip = segment_dates(d, today, trigger, {v[0] for v in smap.values()}, trading)
     print("trading dates:", {k: str(v) for k, v in sorted(seg_date.items())}, "skipped:", seg_skip)
 
-    have_refs = set()
+    have_refs, have_dates = set(), set()
     for sd in sorted(set(seg_date.values())):
         sdt = sd.strftime("%Y%m%d")
+        have_dates.add(sdt)
         for h in eng.call("GET", f"/api/fetcher/have?trade_date={sdt}").json()["have"]:
             have_refs.add((sdt, h["source_ref"]))
 
@@ -220,55 +227,83 @@ def main():
         eng.item(rid, source_ref=ref, segment=seg, file_type=ft, status="running", detail="", trade_date=sdt)
         errors, kind = [], "pending"
         done = False
-        for strategy in src["try"]:
-            try:
-                cands = resolve(strategy, sd, loop, http, src.get("session"))
-                if not versions:
-                    cands = cands[-1:]
-                new, skipped, failed = [], 0, []
-                for c in cands:
-                    vref = f"{ref}:{c.name}" if versions else ref
-                    if versions and (sdt, vref) in have_refs:
-                        skipped += 1
-                        continue
-                    data = c.data if c.data is not None else http.get(c.url, src.get("session")).content
-                    if not looks_like_archive_ok(c.name, data):
-                        raise NotPublished(f"corrupt/partial archive {c.url}")
-                    form = {"source_id": sid, "source_ref": vref, "url": c.url, "replace": "1" if refresh else "",
-                            "trade_date": sdt}
-                    if ft == "span":
-                        cyc = span_cycle(sid, loop, c.name)
-                        if cyc:
-                            form["cycle"] = cyc
-                    up = eng.call("POST", f"/api/fetcher/runs/{rid}/upload", data=form,
-                                  files={"file": (c.name, data, "application/octet-stream")}, timeout=300)
-                    if up.status_code == 201:
-                        u = up.json()["upload"]
-                        new.append(f"#{u['id']} {c.name} ({len(data):,} B)")
-                        have_refs.add((sdt, vref))
-                    elif up.status_code == 400 and "already uploaded" in up.text:
-                        skipped += 1
-                        have_refs.add((sdt, vref))
+        days = [sd]
+        if ft in REFERENCE_TYPES and src.get("dated", True) and not versions:
+            ex = holidays.EXCHANGE_OF.get(seg, "NSE")
+            back = sd
+            for _ in range(FALLBACK_DAYS):
+                for _ in range(10):
+                    back -= timedelta(days=1)
+                    if trading(ex, back):
+                        break
+                days.append(back)
+        for fd in days:
+            fdt = fd.strftime("%Y%m%d")
+            note = "" if fd == sd else f" - {fd:%d-%m} copy ({sd:%d-%m} not published)"
+            if fd != sd:
+                if fdt not in have_dates:
+                    have_dates.add(fdt)
+                    for h in eng.call("GET", f"/api/fetcher/have?trade_date={fdt}").json()["have"]:
+                        have_refs.add((fdt, h["source_ref"]))
+                if (fdt, ref) in have_refs:
+                    report("have", f"already archived{note}")
+                    done = True
+                    break
+            for strategy in src["try"]:
+                if fd != sd and "template" not in strategy:
+                    continue                     # exchange listings only show the current day
+                try:
+                    cands = resolve(strategy, fd, loop, http, src.get("session"))
+                    if not versions:
+                        cands = cands[-1:]
+                    new, skipped, failed = [], 0, []
+                    for c in cands:
+                        vref = f"{ref}:{c.name}" if versions else ref
+                        if versions and (fdt, vref) in have_refs:
+                            skipped += 1
+                            continue
+                        data = c.data if c.data is not None else http.get(c.url, src.get("session")).content
+                        if not looks_like_archive_ok(c.name, data):
+                            raise NotPublished(f"corrupt/partial archive {c.url}")
+                        form = {"source_id": sid, "source_ref": vref, "url": c.url, "replace": "1" if refresh else "",
+                                "trade_date": fdt}
+                        if ft == "span":
+                            cyc = span_cycle(sid, loop, c.name)
+                            if cyc:
+                                form["cycle"] = cyc
+                        up = eng.call("POST", f"/api/fetcher/runs/{rid}/upload", data=form,
+                                      files={"file": (c.name, data, "application/octet-stream")}, timeout=300)
+                        if up.status_code == 201:
+                            u = up.json()["upload"]
+                            new.append(f"#{u['id']} {c.name} ({len(data):,} B)")
+                            have_refs.add((fdt, vref))
+                        elif up.status_code == 400 and "already uploaded" in up.text:
+                            skipped += 1
+                            have_refs.add((fdt, vref))
+                        else:
+                            failed.append(f"{c.name}: engine said {up.status_code} {up.json().get('error', '')[:200]}")
+                    if failed:
+                        report("failed", "; ".join(failed + new) + note)
+                    elif new:
+                        report("archived", "; ".join(new) + (f" (+{skipped} already had)" if skipped else "") + note)
                     else:
-                        failed.append(f"{c.name}: engine said {up.status_code} {up.json().get('error', '')[:200]}")
-                if failed:
-                    report("failed", "; ".join(failed + new))
-                elif new:
-                    report("archived", "; ".join(new) + (f" (+{skipped} already had)" if skipped else ""))
-                else:
-                    report("have", f"{skipped} already archived" if skipped else "nothing new")
-                done = True
+                        report("have", (f"{skipped} already archived" if skipped else "nothing new") + note)
+                    done = True
+                    break
+                except NotPublished as e:
+                    errors.append(str(e))
+                except Blocked as e:
+                    kind = "blocked"
+                    errors.append(str(e))
+                except Exception as e:
+                    kind = "failed" if kind != "blocked" else kind
+                    errors.append(f"{type(e).__name__}: {e}")
+            if done or kind == "blocked":
                 break
-            except NotPublished as e:
-                errors.append(str(e))
-            except Blocked as e:
-                kind = "blocked"
-                errors.append(str(e))
-            except Exception as e:
-                kind = "failed" if kind != "blocked" else kind
-                errors.append(f"{type(e).__name__}: {e}")
         if not done:
-            msg = errors[-1] if errors else ""
+            msg = errors[0] if errors else ""
+            if len(days) > 1:
+                msg += f" (also not found for {', '.join(f'{x:%d-%m}' for x in days[1:])})"
             report(kind, ("not published yet - " if kind == "pending" else "") + msg)
     # Stage 2C: parse what is archived into per-segment snapshots (skipped when nothing changed)
     from app.build_job import build_segments

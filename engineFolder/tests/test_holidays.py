@@ -160,6 +160,8 @@ def test_each_segment_follows_its_own_exchange():
     # Tuesday daytime auto run: NSE/BSE skipped, MCX fetched
     dates, skip = segment_dates(date(2026, 11, 10), date(2026, 11, 10), "auto", segs, tr)
     assert set(skip) == {"NFO", "BFO", "NSECM"} and "MCX" not in skip
-    # a manual run on a holiday still fetches what was asked
-    _, skip = segment_dates(date(2026, 11, 10), date(2026, 11, 10), "manual", segs, tr)
-    assert not skip
+    # a manual run on a holiday (or weekend) fetches for the next trading day
+    dates, skip = segment_dates(date(2026, 11, 10), date(2026, 11, 10), "manual", segs, tr)
+    assert not skip and dates["NFO"] == dates["NSECM"] == date(2026, 11, 11)
+    dates, _ = segment_dates(date(2026, 11, 15), date(2026, 11, 15), "manual", segs, tr)    # Sunday
+    assert dates["NSECM"] == date(2026, 11, 16)

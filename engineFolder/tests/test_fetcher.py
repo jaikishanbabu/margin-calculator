@@ -251,6 +251,10 @@ def fake(strategy, d, loop, http, session):
         if loop.get('cycle') == 'i1':
             return [Candidate('https://nse/nsccl.20261106.i1.zip', 'nsccl.20261106.i1.zip', SPAN)]
         raise NotPublished('404 not yet')
+    if 'template' in strategy and 'NSE_FO_contract' in strategy['template']:
+        if d.day == 5:      # 06-11's master isn't out: the job goes back to 05-11's
+            return [Candidate('https://nse/NSE_FO_contract_05112026.csv.gz', 'NSE_FO_contract_05112026.csv.gz', __import__('gzip').compress(b'h\\n'))]
+        raise NotPublished('404')
     if 'template' in strategy and 'ael_' in strategy['template']:
         return [Candidate('https://nse/ael_06112026.csv', 'ael_06112026.csv', b'Symbol,Type,ELM\\nNIFTY,OTH,2\\n')]
     raise NotPublished('404')
@@ -264,6 +268,9 @@ j.main()
         assert r["status"] == "done"
         assert st["nfo.span:cycle=i1"] == "archived" and st["nfo.span:cycle=i2"] == "pending"
         assert st["nfo.elm"] == "archived" and st["nfo.bhavcopy"] == "pending"
+        cm = next(i for i in r["items"] if i["source_ref"] == "nfo.contract_master")
+        assert cm["status"] == "archived" and "05-11 copy (06-11 not published)" in cm["detail"], cm["detail"]
+        assert "also not found for" in next(i for i in r["items"] if i["source_ref"] == "nfo.ban_list")["detail"]
         # second run: everything already archived is skipped without contacting the exchange
         run2 = fetcher.create_run("manual", "superadmin", ["NFO"], trade_date="20261106", dispatch_fn=lambda r: None)
         job2 = subprocess.run(job.args[:2] + [job.args[2].replace(f"'--run-id','{run['id']}'", f"'--run-id','{run2['id']}'")],
@@ -271,6 +278,7 @@ j.main()
         assert job2.returncode == 0, job2.stdout + job2.stderr
         st2 = {i["source_ref"]: i["status"] for i in fetcher.get_run(run2["id"])["items"]}
         assert st2["nfo.span:cycle=i1"] == "have" and st2["nfo.elm"] == "have"
+        assert st2["nfo.contract_master"] == "have"     # the 05-11 copy is found without asking NSE again
     finally:
         srv.terminate()
         srv.wait(10)
