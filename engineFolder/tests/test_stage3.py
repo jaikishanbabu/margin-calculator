@@ -240,17 +240,14 @@ def test_nse_cash_is_served_only_once_validated(mx, monkeypatch):
     r = c.post("/api/margin", json=order)
     assert r.status_code == 400 and "validated" in r.json()["error"]
     assert c.get("/api/margin/meta?segment=NSECM").status_code == 503
-    # SuperAdmin preview: only with the SuperAdmin's token AND the preview header; marked not validated
-    pv = dict(mx["sa"], **{"X-Preview": "1"})
-    assert c.post("/api/margin", json=order, headers={"X-Preview": "1"}).status_code == 400
-    assert c.post("/api/margin", json=order, headers=mx["sa"]).status_code == 400
-    assert c.post("/api/margin", json=order, headers=dict(pv, Authorization="Bearer forged")).status_code == 400
-    sp = c.get("/api/margin/segments", headers=pv).json()
-    assert sp["preview"] is True and sp["segments"]["NSECM"] == {"served": True, "validated": False, "preview": True}
-    assert c.get("/api/margin/segments").json()["preview"] is False
-    pm = c.post("/api/margin", json=order, headers=pv).json()
-    assert pm["validated"] is False and pm["validation_note"].startswith("SuperAdmin preview")
-    assert c.get("/api/margin/meta?segment=NSECM", headers=pv).json()["validated"] is False
+    # staging (not public): served straight away, labelled not validated
+    monkeypatch.setattr(config, "APP_ENV", "staging")
+    assert c.get("/api/margin/segments").json()["segments"]["NSECM"] == {"served": True, "validated": False}
+    sm = c.post("/api/margin", json=order).json()
+    assert sm["validated"] is False and sm["validation_note"]
+    assert c.get("/api/margin/meta?segment=NSECM").json()["validated"] is False
+    monkeypatch.setattr(config, "APP_ENV", "production")
+    assert c.post("/api/margin", json=order).status_code == 400
     c.post(f"/api/fetcher/runs/{rid}/finish", json={"status": "done"}, headers=mx["job"])
 
     rv = mx["c"].post("/api/admin/validation/run", json={"segment": "NSECM"}, headers=mx["sa"]).json()["run"]["id"]

@@ -402,27 +402,13 @@ async def snapshot_get(request, user):
 
 
 # ---------------------------------------------------------------- margins (Stage 3, public)
-def preview_allowed(request):
-    """A signed-in SuperAdmin (bearer token, sent only when the calculator is opened from the admin page)
-    may try segments that aren't validated yet."""
-    if request.headers.get("x-preview") != "1":
-        return False
-    try:
-        u = current_user(request)
-    except Exception:
-        return False
-    return bool(u and u["role"] == "superadmin" and not u["must_change_password"])
-
-
 async def margin_api(request):
     ip = client_ip(request)
     if not margin_mod.limiter.allow(ip):
         return err("Too many requests - wait a minute", 429)
     b = await body_json(request)
     try:
-        pv = await run_in_threadpool(preview_allowed, request)
-        res = await run_in_threadpool(lambda: margin_mod.margin(str(b.get("segment") or "NFO").upper(), b.get("positions"),
-                                                                preview=pv))
+        res = await run_in_threadpool(margin_mod.margin, str(b.get("segment") or "NFO").upper(), b.get("positions"))
     except margin_mod.MarginError as e:
         return err(str(e))
     except Exception as e:                       # never leak internals on the public endpoint
@@ -435,24 +421,21 @@ async def margin_meta(request):
     if not margin_mod.limiter.allow(client_ip(request)):
         return err("Too many requests - wait a minute", 429)
     try:
-        pv = await run_in_threadpool(preview_allowed, request)
-        return ok(await run_in_threadpool(margin_mod.meta, request.query_params.get("segment", "NFO").upper(), pv))
+        return ok(await run_in_threadpool(margin_mod.meta, request.query_params.get("segment", "NFO").upper()))
     except margin_mod.MarginError as e:
         return err(str(e), 503)
 
 
 async def margin_segments(request):
-    pv = await run_in_threadpool(preview_allowed, request)
-    return ok({"segments": await run_in_threadpool(margin_mod.segments, pv), "preview": pv})
+    return ok({"segments": await run_in_threadpool(margin_mod.segments)})
 
 
 async def margin_contracts(request):
     if not margin_mod.limiter.allow(client_ip(request)):
         return err("Too many requests - wait a minute", 429)
     try:
-        pv = await run_in_threadpool(preview_allowed, request)
         return ok(await run_in_threadpool(margin_mod.contracts, request.query_params.get("segment", "NFO").upper(),
-                                          request.query_params.get("symbol", ""), pv))
+                                          request.query_params.get("symbol", "")))
     except margin_mod.MarginError as e:
         return err(str(e), 404)
 

@@ -17,25 +17,23 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import readiness, validation
+from . import config, readiness, validation
 from .storage import get_store
 
 SERVED = ("NFO",)                 # always served (validated, labelled when not)
 GATED = ("NSECM",)                # served only once their own broker validation has passed
 
 
-def served(segment, preview=False):
-    """preview: a signed-in SuperAdmin may try a gated segment before it is validated (marked not validated)."""
-    return segment in SERVED or (segment in GATED and (preview or validation.status(segment)["validated"]))
+def served(segment):
+    """Gated segments: on staging (not public) straight away, labelled not validated; in production
+    only once their own broker validation has passed."""
+    return segment in SERVED or (segment in GATED and (config.APP_ENV == "staging"
+                                                       or validation.status(segment)["validated"]))
 
 
-def segments(preview=False):
+def segments():
     """Which segments the calculator can show, for its exchange dropdowns."""
-    out = {}
-    for s in SERVED + GATED:
-        v = validation.status(s)["validated"]
-        out[s] = {"served": served(s, preview), "validated": v, "preview": bool(preview and s in GATED and not v)}
-    return out
+    return {s: {"served": served(s), "validated": validation.status(s)["validated"]} for s in SERVED + GATED}
 CACHE_DIR = Path(os.getenv("SNAPSHOT_CACHE_DIR") or (Path(tempfile.gettempdir()) / "margin-snapshots"))
 KEEP_FILES = 3
 MAX_LEGS = 30
@@ -66,8 +64,8 @@ def _local(snap):
     return path
 
 
-def engine_for(segment, preview=False):
-    if not served(segment, preview):
+def engine_for(segment):
+    if not served(segment):
         raise MarginError(f"{segment} margins aren't available yet - they appear once validated against brokers")
     snap, fallback = readiness.in_use(segment)
     if not snap:
@@ -116,18 +114,16 @@ def _validated(segment, snap):
     v = validation.status(segment)
     ok = v["validated"] and (snap["basis"] == "bod" or segment in GATED)
     note = "" if ok else (v["reason"] if not v["validated"] else "Latest-cycle margins aren't validated against brokers")
-    if segment in GATED and not v["validated"]:
-        note = "SuperAdmin preview - not validated against brokers yet. " + note
     return ok, note, (v.get("latest") or {}).get("summary") or {}
 
 
-def cash_margin(orders, preview=False):
+def cash_margin(orders):
     from engine import CashError, CashOrder
     if not isinstance(orders, list) or not orders:
         raise MarginError("orders must be a non-empty list")
     if len(orders) > MAX_LEGS:
         raise MarginError(f"at most {MAX_LEGS} orders")
-    eng, snap, fallback = engine_for("NSECM", preview)
+    eng, snap, fallback = engine_for("NSECM")
     try:
         os_ = []
         for o in orders:
@@ -149,10 +145,10 @@ def cash_margin(orders, preview=False):
             "evidence": {"baskets": summ.get("baskets_passed", 0) + summ.get("baskets_lagged", 0)}}
 
 
-def margin(segment, positions, alone=True, preview=False):
+def margin(segment, positions, alone=True):
     from engine import NoRiskData, UnknownContract
     if segment == "NSECM":
-        return cash_margin(positions, preview)
+        return cash_margin(positions)
     if not isinstance(positions, list) or not positions:
         raise MarginError("positions must be a non-empty list")
     if len(positions) > MAX_LEGS:
@@ -208,10 +204,10 @@ def _first_day(snap):
     return f"{td[:4]}-{td[4:6]}-{td[6:8]}" if len(td) == 8 else "0000-00-00"
 
 
-def meta(segment, preview=False):
+def meta(segment):
     """What the calculator page needs before the first basket: the data in use, the validation
     state and the instruments (index first, then stocks) with their reference price."""
-    eng, snap, fallback = engine_for(segment, preview)
+    eng, snap, fallback = engine_for(segment)
     if segment == "NSECM":
         return cash_meta(eng, snap, fallback)
     day = _first_day(snap)
@@ -233,10 +229,10 @@ def meta(segment, preview=False):
                         for r in rows]}
 
 
-def contracts(segment, symbol, preview=False):
+def contracts(segment, symbol):
     """Listed contracts of one underlying: per expiry, the lot size, whether a future trades,
     and the call / put strikes."""
-    eng, snap, _ = engine_for(segment, preview)
+    eng, snap, _ = engine_for(segment)
     sym = str(symbol or "").upper()[:30]
     rows = eng.conn.execute(
         """SELECT expiry, instrument, option_type, strike, lot_size FROM contract

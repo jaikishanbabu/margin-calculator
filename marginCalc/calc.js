@@ -25,10 +25,6 @@
   let exch = MARKETS[tab].exchanges.find(x => x.ex === (params.get("ex") || "").toUpperCase()) || MARKETS[tab].exchanges[0];
   let SEG = exch.seg;
   const storeKey = () => `mc_basket_v2_${SEG}`;
-  // SuperAdmin preview: opened from the admin page in the same tab, which holds the login token in
-  // sessionStorage. Lets a SuperAdmin try an exchange that isn't validated yet; nobody else sees it.
-  const ADMIN_TOKEN = (() => { try { return sessionStorage.getItem("mc_token") || ""; } catch (_) { return ""; } })();
-  const PREVIEW = params.get("preview") === "1" && !!ADMIN_TOKEN;
 
   function el(tag, attrs, ...kids) {
     const e = document.createElement(tag);
@@ -50,9 +46,7 @@
   async function api(path, opts = {}) {
     pending++; $("#topBar").classList.add("on");
     try {
-      const headers = opts.body ? { "Content-Type": "application/json" } : {};
-      if (PREVIEW) { headers["Authorization"] = "Bearer " + ADMIN_TOKEN; headers["X-Preview"] = "1"; }
-      const r = await fetch(API + path, { method: opts.method || "GET", headers,
+      const r = await fetch(API + path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {},
                                           body: opts.body ? JSON.stringify(opts.body) : undefined });
       let j = null; try { j = await r.json(); } catch (_) { /* not JSON */ }
       if (!r.ok) { const e = new Error((j && j.error) || `HTTP ${r.status}`); e.status = r.status; throw e; }
@@ -377,12 +371,7 @@
     try {
       const r = await api("/api/margin/segments");
       for (const m of Object.values(MARKETS)) for (const x of m.exchanges)
-        if (r.segments[x.seg]) { x.live = r.segments[x.seg].served; x.preview = !!r.segments[x.seg].preview; }
-      if (r.preview) {
-        const b = el("div", { class: "preview-bar" }, "SuperAdmin preview: exchanges marked “preview” aren't validated against brokers yet and are hidden from everyone else.");
-        document.body.prepend(b);
-        for (const m of Object.values(MARKETS)) for (const x of m.exchanges) if (x.preview) x.label += " (preview)";
-      }
+        if (r.segments[x.seg]) x.live = r.segments[x.seg].served;
       if (!exch.live) { const l = MARKETS[tab].exchanges.find(x => x.live); if (l) { exch = l; SEG = l.seg; } }
     } catch (_) { /* keep the defaults: NSE F&O only */ }
     drawPicker();

@@ -125,5 +125,3 @@ button.link{background:none;border:0;color:var(--primary);font-weight:600;font-s
 .soon p{line-height:1.55}
 .segmented.side button[data-v=buy].on{background:var(--good)}
 .segmented.side button[data-v=sell].on{background:var(--bad)}
-
-.preview-bar { background: #fff4d6; color: #7a5200; border-bottom: 1px solid #f0d58a; padding: 8px 14px; font-size: 13px; text-align: center; }
