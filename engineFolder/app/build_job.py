@@ -59,7 +59,7 @@ def iso_day(yyyymmdd):
 
 # Originals already downloaded by an earlier run (GitHub Actions cache, see fetcher.yml). Keyed by the
 # SHA-256 the engine recorded, and re-checked on read, so a stale or damaged cache can't feed a build.
-CACHE_DIR = os.environ.get("ORIGINALS_CACHE", "")
+CACHE_DIR = os.path.expanduser(os.environ.get("ORIGINALS_CACHE", ""))
 
 
 def cache_get(sha):

@@ -32,7 +32,11 @@ def _env(name, default=""):
 
 
 APP_ENV = _env("APP_ENV", "dev").lower()
-APP_VERSION = _env("RENDER_GIT_COMMIT") or _env("APP_VERSION") or "dev"
+APP_VERSION = _env("RENDER_GIT_COMMIT") or _env("RAILWAY_GIT_COMMIT_SHA") or _env("APP_VERSION") or "dev"
+# Which host this engine runs on, and its public address (both set automatically by Render / Railway).
+HOST_NAME = _env("HOST_NAME") or ("render" if _env("RENDER") else "railway" if _env("RAILWAY_ENVIRONMENT") else "local")
+PUBLIC_URL = (_env("PUBLIC_URL") or _env("RENDER_EXTERNAL_URL")
+              or (f"https://{_env('RAILWAY_PUBLIC_DOMAIN')}" if _env("RAILWAY_PUBLIC_DOMAIN") else "")).rstrip("/")
 
 DATABASE_URL = _env("DATABASE_URL")
 SQLITE_PATH = _env("SQLITE_PATH") or str(BASE_DIR / "data" / "margin.db")
