@@ -57,6 +57,38 @@ def iso_day(yyyymmdd):
     return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
 
 
+# Originals already downloaded by an earlier run (GitHub Actions cache, see fetcher.yml). Keyed by the
+# SHA-256 the engine recorded, and re-checked on read, so a stale or damaged cache can't feed a build.
+CACHE_DIR = os.environ.get("ORIGINALS_CACHE", "")
+
+
+def cache_get(sha):
+    if not CACHE_DIR or not re.fullmatch(r"[0-9a-f]{64}", sha or ""):
+        return None
+    p = Path(CACHE_DIR) / sha
+    try:
+        data = p.read_bytes()
+    except OSError:
+        return None
+    if _sha(data) != sha:
+        p.unlink(missing_ok=True)
+        return None
+    os.utime(p)          # keep recently used files when the cache is pruned
+    return data
+
+
+def cache_put(sha, data):
+    if not CACHE_DIR or not re.fullmatch(r"[0-9a-f]{64}", sha or ""):
+        return
+    try:
+        Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
+        tmp = Path(CACHE_DIR) / (sha + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, Path(CACHE_DIR) / sha)
+    except OSError:
+        pass
+
+
 def materialize(eng, files, data_dir, source_map, log=print):
     """Download + unpack into data/<SEG>/<kind>/<YYYY-MM-DD>/. Returns {upload_id: [names on disk]}."""
     from exfetch.store import unpack
@@ -69,14 +101,24 @@ def materialize(eng, files, data_dir, source_map, log=print):
             continue
         folder = Path(data_dir) / where[0] / where[1] / iso_day(f["trade_date"])
         folder.mkdir(parents=True, exist_ok=True)
-        r = eng.call("GET", f"/api/fetcher/uploads/{f['id']}/original", timeout=300)
-        if r.status_code != 200:
-            raise RuntimeError(f"could not download #{f['id']} {f['filename']}: HTTP {r.status_code}")
-        if _sha(r.content) != f["sha256"]:
-            raise RuntimeError(f"#{f['id']} {f['filename']}: checksum mismatch after download")
+        content = cache_get(f["sha256"])
+        if content is None:
+            try:
+                if hasattr(eng, "original"):
+                    content = eng.original(f["id"])
+                else:
+                    r = eng.call("GET", f"/api/fetcher/uploads/{f['id']}/original", timeout=300)
+                    if r.status_code != 200:
+                        raise RuntimeError(f"HTTP {r.status_code}")
+                    content = r.content
+            except Exception as e:
+                raise RuntimeError(f"could not download #{f['id']} {f['filename']}: {e}")
+            if _sha(content) != f["sha256"]:
+                raise RuntimeError(f"#{f['id']} {f['filename']}: checksum mismatch after download")
+            cache_put(f["sha256"], content)
         before = set(os.listdir(folder))
         path = folder / f["filename"]
-        path.write_bytes(r.content)
+        path.write_bytes(content)
         unpack(path, folder)
         names[f["id"]] = sorted({f["filename"]} | (set(os.listdir(folder)) - before))
     return names
@@ -291,9 +333,13 @@ def build_segments(eng, run_id, segments, fetch_json=None, today=None, log=print
                     meta = {"fingerprint": prints[b], "info": info, "inputs": uin,
                             "rules": rules, "code_version": os.getenv("GITHUB_SHA", "local")[:40],
                             "trade_date": info.get("trade_date"), "raw_bytes": len(raw), "loader_version": LOADER_VERSION}
-                    up = eng.call("POST", f"/api/fetcher/runs/{run_id}/snapshot",
-                                  data={"segment": seg, "basis": b, "meta": json.dumps(meta)},
-                                  files={"file": (path.name + ".gz", blob, "application/gzip")}, timeout=300)
+                    sform = {"segment": seg, "basis": b, "meta": json.dumps(meta)}
+                    if hasattr(eng, "post_file"):
+                        up = eng.post_file(run_id, f"/api/fetcher/runs/{run_id}/snapshot", sform, path.name + ".gz", blob,
+                                           "application/gzip", allow_gzip=False)
+                    else:
+                        up = eng.call("POST", f"/api/fetcher/runs/{run_id}/snapshot", data=sform,
+                                      files={"file": (path.name + ".gz", blob, "application/gzip")}, timeout=300)
                     if up.status_code != 201:
                         raise RuntimeError(f"engine said {up.status_code} {up.text[:200]}")
                     s = up.json()["snapshot"]

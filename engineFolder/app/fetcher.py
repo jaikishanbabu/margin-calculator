@@ -340,6 +340,11 @@ def job_finished(run_id, status="done", message=""):
         c.execute("UPDATE fetch_runs SET status = ?, finished_at = ?, message = ?, summary = ? WHERE id = ?",
                   (status, iso(), str(message)[:500], json.dumps(counts), run_id))
         audit.append(c, "auto-fetcher", "fetch_run_finished", {"run_id": run_id, "status": status, "counts": counts})
+    try:   # leftovers of direct uploads (app/transfer.py); keep files of runs still going
+        from .transfer import sweep_incoming
+        sweep_incoming([r["id"] for r in db.query("SELECT id FROM fetch_runs WHERE status = 'running'")])
+    except Exception:
+        pass
     return get_run(run_id, with_items=False)
 
 

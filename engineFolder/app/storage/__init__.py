@@ -58,6 +58,19 @@ class ArchiveStore:
     def delete(self, key: str) -> None:
         raise NotImplementedError
 
+    # --- direct transfer (keeps big files off the engine host's outbound bandwidth) ---------------
+    # A backend that can hand out short-lived signed links returns them here; None means "not
+    # supported" and callers fall back to sending the bytes through the engine.
+    def sign_download(self, key: str, expires: int = 900):
+        return None
+
+    def sign_upload(self, key: str, expires: int = 900):
+        return None
+
+    def copy(self, src: str, dst: str) -> None:
+        """Copy inside the store (server-side where the backend can). Write-once: AlreadyExists if dst exists."""
+        self.put(dst, self.get(src))
+
     def put_verified(self, key, data, content_type="application/octet-stream") -> StoredObject:
         """Write, read back and compare checksums. Archive writes always go through this."""
         expected = sha256(data)

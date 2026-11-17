@@ -216,13 +216,22 @@ def _free_port():
     return p
 
 
-def test_fetch_job_end_to_end_with_fake_exchange(env, tmp_path, monkeypatch):
-    """Runs app.fetch_job against a real engine process; the exchange is faked at the resolver."""
+@pytest.mark.parametrize("backend", ["local", "supabase"])
+def test_fetch_job_end_to_end_with_fake_exchange(env, tmp_path, monkeypatch, backend):
+    """Runs app.fetch_job against a real engine process; the exchange is faked at the resolver.
+    backend=supabase: files must go job <-> storage over signed links, never through the engine."""
     port = _free_port()
     sqlite = str(tmp_path / "e2e.db")
     store_dir = str(tmp_path / "e2e_archive")
     eng_env = dict(os.environ, APP_ENV="dev", SQLITE_PATH=sqlite, LOCAL_STORE_DIR=store_dir, STORAGE_BACKEND="local",
-                   SUPERADMIN_PASSWORD="E2e-Boot-Pass-1", FETCHER_TOKEN=FT, OPS_TOKEN="x" * 40, DATABASE_URL="")
+                   SUPERADMIN_PASSWORD="E2e-Boot-Pass-1", FETCHER_TOKEN=FT, OPS_TOKEN="x" * 40, DATABASE_URL="",
+                   ORIGINALS_CACHE=str(tmp_path / "cache"))
+    fake = None
+    if backend == "supabase":
+        from fake_supabase import KEY, FakeStorage
+        fake = FakeStorage()
+        eng_env.update(STORAGE_BACKEND="supabase", SUPABASE_URL=fake.url, SUPABASE_SERVICE_KEY=KEY,
+                       SUPABASE_BUCKET="margin-archive")
     root = Path(__file__).resolve().parent.parent
     srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=root, env=eng_env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -279,9 +288,20 @@ j.main()
         st2 = {i["source_ref"]: i["status"] for i in fetcher.get_run(run2["id"])["items"]}
         assert st2["nfo.span:cycle=i1"] == "have" and st2["nfo.elm"] == "have"
         assert st2["nfo.contract_master"] == "have"     # the 05-11 copy is found without asking NSE again
+        if fake:
+            keys = [k for (_, k) in fake.objects]
+            hits = fake.unsigned_hits
+            assert any(k == "upload" for k, _ in hits), "files were not uploaded over signed links"
+            assert any(k.startswith("originals/NFO/") for k in keys)
+            assert not [k for k in keys if k.startswith("incoming/")], "staged files left behind"
+            assert "direct upload failed" not in job.stdout + job2.stdout
+            if any(k.startswith("snapshots/") for k in keys) or any(h[0] == "download" for h in hits):
+                assert "direct download failed" not in job.stdout + job2.stdout
     finally:
         srv.terminate()
         srv.wait(10)
+        if fake:
+            fake.close()
 
 
 # ---------------------------------------------------------------- evening runs fetch the next trading day
@@ -311,3 +331,92 @@ def test_job_can_move_trade_date_forward_only(fx):
     assert r.status_code == 200 and fetcher.get_run(rid)["trade_date"] == "20261111"
     acts = [e["action"] for e in c.get("/api/admin/audit", headers=fx["sa"]).json()["entries"]]
     assert "fetch_run_trade_date_moved" in acts
+
+
+# ---------------------------------------------------------------- direct storage transfer (Render bandwidth)
+@pytest.fixture()
+def sfx(fx, monkeypatch):
+    monkeypatch.setattr(config, "STORAGE_BACKEND", "supabase")
+    from fake_supabase import KEY, FakeStorage
+    from app.storage.supabase import SupabaseStore
+    fake = FakeStorage()
+    storage.set_store(SupabaseStore(fake.url, KEY, "margin-archive"))
+    fx["fake"] = fake
+    yield fx
+    storage.set_store(None)
+    fake.close()
+
+
+def test_staged_upload_and_signed_download_skip_the_engine(sfx, monkeypatch):
+    import gzip as gz
+    import requests
+    from app.fetch_job import Engine
+    monkeypatch.setattr(fetcher, "trading_date_for", lambda now=None: "20261106")
+    c, fake = sfx["client"], sfx["fake"]
+    rid = _run(sfx)
+    data = b"Symbol,Type,ELM\n" + b"NIFTY,OTH,2\n" * 40000        # > 256 KB text -> client gzips it
+    slot = c.post(f"/api/fetcher/runs/{rid}/stage", headers=sfx["job"], json={"filename": "ael_06112026.csv"}).json()["slot"]
+    assert slot["key"].startswith(f"incoming/{rid}/")
+    assert requests.put(slot["url"], data=gz.compress(data)).status_code == 200
+    r = c.post(f"/api/fetcher/runs/{rid}/upload", headers=sfx["job"], data={
+        "source_id": "nfo.elm", "url": "https://example/ael.csv", "staged_key": slot["key"], "staged_encoding": "gzip",
+        "filename": "ael_06112026.csv", "trade_date": "20261106"})
+    assert r.status_code == 201, r.text
+    u = r.json()["upload"]
+    assert u["archive_encoding"] == "gzip" and u["archive_key"].endswith(".gz") and u["size_bytes"] == len(data)
+    assert not [k for (_, k) in fake.objects if k.startswith("incoming/")]          # staged copy removed
+    # the build job gets a signed link, not the bytes
+    link = c.get(f"/api/fetcher/uploads/{u['id']}/original?link=1", headers=sfx["job"]).json()["link"]
+    assert link["encoding"] == "gzip" and link["sha256"] == u["sha256"]
+    assert gz.decompress(requests.get(link["url"]).content) == data
+    # the old byte route still works (admin tools, older jobs)
+    assert c.get(f"/api/fetcher/uploads/{u['id']}/original", headers=sfx["job"]).content == data
+    # same pipeline checks apply: a duplicate is still refused, and its staged copy is still cleaned up
+    slot2 = c.post(f"/api/fetcher/runs/{rid}/stage", headers=sfx["job"], json={"filename": "ael.csv"}).json()["slot"]
+    requests.put(slot2["url"], data=data)
+    r2 = c.post(f"/api/fetcher/runs/{rid}/upload", headers=sfx["job"], data={
+        "source_id": "nfo.elm", "staged_key": slot2["key"], "trade_date": "20261106"})
+    assert r2.status_code == 400 and "already uploaded" in r2.text
+    assert not [k for (_, k) in fake.objects if k.startswith("incoming/")]
+
+
+def test_staged_key_must_belong_to_the_run(sfx, monkeypatch):
+    monkeypatch.setattr(fetcher, "trading_date_for", lambda now=None: "20261106")
+    c = sfx["client"]
+    rid = _run(sfx)
+    for bad in ("originals/NFO/x", f"incoming/{rid + 1}/0123456789abcdef_a.csv", f"incoming/{rid}/../originals/a"):
+        r = c.post(f"/api/fetcher/runs/{rid}/upload", headers=sfx["job"],
+                   data={"source_id": "nfo.elm", "staged_key": bad, "trade_date": "20261106"})
+        assert r.status_code == 400, bad
+    # nobody but the job may ask for links
+    assert c.post(f"/api/fetcher/runs/{rid}/stage", json={"filename": "a"}).status_code in (401, 403)
+    assert c.post(f"/api/fetcher/runs/{rid}/stage", headers=sfx["sa"], json={"filename": "a"}).status_code in (401, 403)
+
+
+def test_job_engine_client_falls_back_when_direct_put_fails(sfx, monkeypatch):
+    """If signed uploads are refused (e.g. a gateway change), the job still delivers through the engine."""
+    import requests
+    from app import fetch_job
+    monkeypatch.setattr(fetcher, "trading_date_for", lambda now=None: "20261106")
+    c = sfx["client"]
+    rid = _run(sfx)
+
+    class Resp:
+        def __init__(self, r):
+            self.r = r
+            self.status_code, self.text, self.content, self.headers = r.status_code, r.text, r.content, r.headers
+
+        def json(self):
+            return self.r.json()
+
+    eng = fetch_job.Engine("http://testserver", FT)
+    eng.call = lambda method, path, **kw: Resp(c.request(method, path, headers=sfx["job"],
+                                                         **{k: v for k, v in kw.items() if k != "timeout"}))
+    real = requests.request
+    monkeypatch.setattr(fetch_job.requests, "request",
+                        lambda m, url, **kw: type("R", (), {"status_code": 403})() if m == "PUT" else real(m, url, **kw))
+    r = eng.post_file(rid, f"/api/fetcher/runs/{rid}/upload",
+                      {"source_id": "nfo.elm", "url": "https://x/ael.csv", "trade_date": "20261106"}, "ael.csv", b"a,b\n1,2\n")
+    assert r.status_code == 201 and eng.direct_ok is False
+    uid = r.json()["upload"]["id"]
+    assert eng.original(uid) == b"a,b\n1,2\n"

@@ -11,6 +11,7 @@
 4. Reports each file's status as it goes, so the admin page shows live progress.
 """
 import argparse
+import gzip
 import os
 import re
 import sys
@@ -38,6 +39,10 @@ SOURCES = ROOT / "exfetch_sources.yaml"
 EOD_NOT_BEFORE = "17:30"     # auto runs don't ask for end-of-day files before this (IST, on the trade date)
 
 
+def is_compressed(data):
+    return data[:4] == b"PK\x03\x04" or data[:2] == b"\x1f\x8b"
+
+
 class Engine:
     def __init__(self, base, token):
         self.base = base.rstrip("/")
@@ -63,6 +68,62 @@ class Engine:
                 if attempt == 2:
                     raise
                 time.sleep(5)
+
+    # ---- direct storage transfer (app/transfer.py): big files skip the engine host's bandwidth ----
+    direct_ok = True     # flips off for the rest of the run after a direct-transfer failure
+
+    def _plain(self, method, url, **kw):
+        """Signed storage links carry their own token: never send the fetcher token there."""
+        for attempt in range(3):
+            try:
+                return requests.request(method, url, timeout=300, **kw)
+            except requests.RequestException:
+                if attempt == 2:
+                    raise
+                time.sleep(5)
+
+    def post_file(self, run_id, path, form, filename, data, content_type="application/octet-stream", allow_gzip=True):
+        """POST a file to an engine endpoint that accepts `file` or `staged_key`. Tries the direct route first."""
+        if self.direct_ok:
+            try:
+                slot = self.call("POST", f"/api/fetcher/runs/{run_id}/stage", json={"filename": filename})
+                slot = slot.json().get("slot") if slot.status_code == 200 else None
+                if slot:
+                    enc, payload = "identity", data
+                    if allow_gzip and len(data) > 256 * 1024 and not is_compressed(data):
+                        enc, payload = "gzip", gzip.compress(data, compresslevel=6, mtime=0)
+                    put = self._plain("PUT", slot["url"], data=payload,
+                                      headers={"Content-Type": "application/gzip" if enc == "gzip" else content_type,
+                                               "x-upsert": "false", "cache-control": "no-store"})
+                    if put.status_code in (200, 201):
+                        f2 = dict(form, staged_key=slot["key"], staged_encoding=enc, filename=filename)
+                        r = self.call("POST", path, data=f2, timeout=300)
+                        if r.status_code != 400 or "staged" not in r.text:
+                            return r
+                    print(f"direct upload failed (HTTP {put.status_code}) - sending through the engine instead")
+                    self.direct_ok = False
+            except requests.RequestException as e:
+                print(f"direct upload failed ({e}) - sending through the engine instead")
+                self.direct_ok = False
+        return self.call("POST", path, data=form, files={"file": (filename, data, content_type)}, timeout=300)
+
+    def original(self, upload_id):
+        """Original bytes of an archived upload: signed direct link if offered, else through the engine."""
+        if self.direct_ok:
+            r = self.call("GET", f"/api/fetcher/uploads/{upload_id}/original?link=1", timeout=300)
+            if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
+                link = r.json()["link"]
+                d = self._plain("GET", link["url"])
+                if d.status_code == 200:
+                    return gzip.decompress(d.content) if link["encoding"] == "gzip" else d.content
+                print(f"direct download failed (HTTP {d.status_code}) - using the engine instead")
+                self.direct_ok = False
+            elif r.status_code == 200:
+                return r.content
+        r = self.call("GET", f"/api/fetcher/uploads/{upload_id}/original", timeout=300)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return r.content
 
     def item(self, run_id, **it):
         self.call("POST", f"/api/fetcher/runs/{run_id}/items", json={"items": [it]})
@@ -271,8 +332,7 @@ def main():
                             cyc = span_cycle(sid, loop, c.name)
                             if cyc:
                                 form["cycle"] = cyc
-                        up = eng.call("POST", f"/api/fetcher/runs/{rid}/upload", data=form,
-                                      files={"file": (c.name, data, "application/octet-stream")}, timeout=300)
+                        up = eng.post_file(rid, f"/api/fetcher/runs/{rid}/upload", form, c.name, data)
                         if up.status_code == 201:
                             u = up.json()["upload"]
                             new.append(f"#{u['id']} {c.name} ({len(data):,} B)")

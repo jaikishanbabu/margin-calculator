@@ -56,6 +56,51 @@ class SupabaseStore(ArchiveStore):
             raise NotFound(key)
         raise StorageError(f"Supabase get {key} failed: HTTP {st}")
 
+    def _abs(self, path):
+        """Signed paths come back relative to /storage/v1 (current API) or to the host (older API)."""
+        if path.startswith("http"):
+            return path
+        if path.startswith("/storage/v1"):
+            return self.base[: -len("/storage/v1")] + path
+        return self.base + (path if path.startswith("/") else "/" + path)
+
+    def sign_download(self, key, expires=900):
+        payload = json.dumps({"expiresIn": int(expires)}).encode()
+        st, body = self._req("POST", f"/object/sign/{self.bucket}/" + urllib.parse.quote(validate_key(key)), payload,
+                             {"Content-Type": "application/json"})
+        if st != 200:
+            raise StorageError(f"Supabase sign {key} failed: HTTP {st}")
+        j = json.loads(body or b"{}")
+        path = j.get("signedURL") or j.get("signedUrl")
+        if not path:
+            raise StorageError("Supabase sign returned no URL")
+        return self._abs(path)
+
+    def sign_upload(self, key, expires=900):
+        # Supabase signed upload links are valid for 2 hours; `expires` is accepted for interface symmetry.
+        st, body = self._req("POST", f"/object/upload/sign/{self.bucket}/" + urllib.parse.quote(validate_key(key)), b"{}",
+                             {"Content-Type": "application/json", "x-upsert": "false"})
+        if st != 200:
+            raise StorageError(f"Supabase upload-sign {key} failed: HTTP {st} {body[:200]!r}")
+        j = json.loads(body or b"{}")
+        path = j.get("url") or j.get("signedUrl") or j.get("signedURL")
+        if not path:
+            raise StorageError("Supabase upload-sign returned no URL")
+        return self._abs(path)
+
+    def copy(self, src, dst):
+        payload = json.dumps({"bucketId": self.bucket, "sourceKey": validate_key(src),
+                              "destinationKey": validate_key(dst)}).encode()
+        st, body = self._req("POST", "/object/copy", payload, {"Content-Type": "application/json"})
+        if st in (200, 201):
+            return
+        text = body.decode(errors="replace")
+        if st == 409 or "Duplicate" in text or "already exists" in text:
+            raise AlreadyExists(dst)
+        if st in (400, 404) and ("not found" in text.lower() or "NoSuchKey" in text):
+            raise NotFound(src)
+        raise StorageError(f"Supabase copy {src} -> {dst} failed: HTTP {st} {text[:200]}")
+
     def exists(self, key):
         try:
             self.get(key)

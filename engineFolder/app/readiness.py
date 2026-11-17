@@ -185,22 +185,35 @@ def build_inputs(segment):
                             for b in p["bases"]}}
 
 
-def original(upload_id):
-    """Decoded original bytes of an archived upload (for the build job)."""
-    from .uploads import decode
+def original_row(upload_id):
     u = db.query_one("SELECT archive_key, archive_encoding, sha256, filename, status FROM uploads WHERE id = ?", (upload_id,))
     if not u:
         raise LookupError("Upload not found")
+    u = dict(u)
     if u["status"] != "archived":
         raise ValueError(f"Upload is {u['status']}")
+    return u
+
+
+def original_link(upload_id):
+    """Signed direct-download link for the build job (None when the store can't sign)."""
+    from .transfer import original_link as link
+    return link(original_row(upload_id))
+
+
+def original(upload_id):
+    """Decoded original bytes of an archived upload (for the build job)."""
+    from .uploads import decode
+    u = original_row(upload_id)
     data = decode(get_store().get(u["archive_key"]), u.get("archive_encoding") or "identity")
     if sha256(data) != u["sha256"]:
         raise ValueError("Archived file failed its checksum")
     return u["filename"], data
 
 
-def record(run_id, segment, basis, meta, blob=None):
-    """Store a build result. blob: gzip of the SQLite database (None for a failed build)."""
+def record(run_id, segment, basis, meta, blob=None, staged_key=None):
+    """Store a build result. blob: gzip of the SQLite database (None for a failed build).
+    staged_key: the job already put `blob` into storage there; copy it inside storage instead of uploading."""
     if segment not in PARSERS or basis not in PARSERS[segment]["bases"]:
         raise ValueError("Unknown segment or basis")
     status = "ready" if blob is not None else "failed"
@@ -216,7 +229,12 @@ def record(run_id, segment, basis, meta, blob=None):
         key = f"snapshots/{segment}/{td or 'unknown'}/{basis}-{digest[:16]}.sqlite.gz"
         store = get_store()
         if not store.exists(key):
-            store.put_verified(key, blob, "application/gzip")
+            if staged_key:
+                store.copy(staged_key, key)
+                if sha256(store.get(key)) != digest:
+                    raise ValueError("Snapshot copy failed its checksum")
+            else:
+                store.put_verified(key, blob, "application/gzip")
         size = len(blob)
     span_day = str(info.get("span_business_date") or info.get("span_trade_date") or "").replace("-", "") or None
     row = (segment, basis, status, kind, td, span_day, str(info.get("span_cycle") or info.get("var_batch") or "") or None,

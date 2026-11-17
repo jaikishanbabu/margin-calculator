@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, fetcher, holidays, margin as margin_mod, readiness, segments, uploads, validation
+from . import audit, auth, backup, config, db, fetcher, holidays, margin as margin_mod, readiness, segments, transfer, uploads, validation
 from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
@@ -543,11 +543,14 @@ async def job_finish(request, user):
 
 @endpoint(fetcher_job=True)
 async def job_upload(request, user):
-    form = await request.form(max_files=1, max_fields=12)
+    form = await request.form(max_files=1, max_fields=14)
     f = form.get("file")
+    staged_key = str(form.get("staged_key", "")) or None
+    rid = int(request.path_params["rid"])
+    if staged_key:
+        return await _job_upload_staged(request, form, rid, staged_key)
     if f is None or not hasattr(f, "read"):
         return err("No file attached")
-    rid = int(request.path_params["rid"])
     run = await run_in_threadpool(fetcher.get_run, rid, False)
     if not run or run["status"] != "running":
         return err("Run is not running", 409)
@@ -572,6 +575,44 @@ async def job_upload(request, user):
         str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
         {"url": str(form.get("url", ""))[:400], "run_id": rid})
     return ok({"upload": result}, 201)
+
+
+async def _job_upload_staged(request, form, rid, staged_key):
+    """Same pipeline as job_upload, but the bytes are already in storage under incoming/<rid>/."""
+    try:
+        run = await run_in_threadpool(fetcher.get_run, rid, False)
+        if not run or run["status"] != "running":
+            return err("Run is not running", 409)
+        sid = str(form.get("source_id", ""))
+        if sid not in SOURCE_MAP:
+            return err("Unknown source")
+        segment, file_type = SOURCE_MAP[sid]
+        enc = str(form.get("staged_encoding", "identity"))
+        try:
+            payload, data = await run_in_threadpool(transfer.load_staged, rid, staged_key, enc, transfer.max_upload_bytes())
+        except transfer.TransferError as e:
+            return err(str(e), 400)
+        actor = {"username": "auto-fetcher" if run["trigger"] == "auto" else f"fetcher ({run['requested_by']})"}
+        result = await run_in_threadpool(
+            uploads.process, actor, str(form.get("filename", "")) or staged_key.split("_", 1)[-1], data, segment, file_type,
+            fetcher.upload_trade_date(run, str(form.get("trade_date", ""))), str(form.get("cycle", "")) or None,
+            client_ip(request), str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
+            {"url": str(form.get("url", ""))[:400], "run_id": rid}, (staged_key, enc, payload))
+        return ok({"upload": result}, 201)
+    finally:
+        await run_in_threadpool(transfer.discard, rid, staged_key)
+
+
+@endpoint(fetcher_job=True)
+async def job_stage(request, user):
+    """Signed upload link so the job can put a file straight into storage (see app/transfer.py)."""
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running":
+        return err("Run is not running", 409)
+    b = await body_json(request)
+    slot = await run_in_threadpool(transfer.stage_slot, rid, str(b.get("filename", "")) or "file")
+    return ok({"slot": slot})
 
 
 @endpoint(fetcher_job=True)
@@ -616,7 +657,12 @@ async def job_build_inputs(request, user):
 
 @endpoint(fetcher_job=True)
 async def job_original(request, user):
-    name, data = await run_in_threadpool(readiness.original, int(request.path_params["uid"]))
+    uid = int(request.path_params["uid"])
+    if request.query_params.get("link") == "1":
+        link = await run_in_threadpool(readiness.original_link, uid)
+        if link:
+            return ok({"link": link})
+    name, data = await run_in_threadpool(readiness.original, uid)
     return Response(data, media_type="application/octet-stream",
                     headers={"x-filename": uploads.safe_filename(name)})
 
@@ -633,6 +679,19 @@ async def job_snapshot(request, user):
         assert isinstance(meta, dict)
     except Exception:
         return err("meta must be a JSON object")
+    staged_key = str(form.get("staged_key", "")) or None
+    if staged_key:
+        try:
+            try:
+                blob, _ = await run_in_threadpool(transfer.load_staged, rid, staged_key, "identity",
+                                                  readiness.MAX_SNAPSHOT_MB * 1024 * 1024)
+            except transfer.TransferError as e:
+                return err(str(e), 400)
+            snap = await run_in_threadpool(readiness.record, rid, str(form.get("segment", "")).upper(),
+                                           str(form.get("basis", "")), meta, blob, staged_key)
+            return ok({"snapshot": snap}, 201)
+        finally:
+            await run_in_threadpool(transfer.discard, rid, staged_key)
     if str(form.get("unchanged", "")) == "1":
         await run_in_threadpool(readiness.mark_unchanged, str(form.get("segment", "")).upper(),
                                 str(form.get("basis", "")), meta.get("fingerprint", ""))
@@ -729,6 +788,7 @@ routes = [
     Route("/api/fetcher/have", job_have),
     Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
+    Route("/api/fetcher/runs/{rid:int}/stage", job_stage, methods=["POST"]),
     Route("/api/fetcher/build/inputs", job_build_inputs),
     Route("/api/fetcher/calendar", job_calendar),
     Route("/api/fetcher/runs/{rid:int}/validation", job_validation, methods=["POST"]),
