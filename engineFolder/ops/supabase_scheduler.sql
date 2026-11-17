@@ -1,5 +1,5 @@
 -- Supabase scheduler for the exchange fetcher (run once in the Supabase SQL editor, as the owner).
--- Calls the engine's tick endpoint every 15 minutes; the engine decides whether a fetch is due
+-- Calls the preferred engine host's tick endpoint every 15 minutes (Render or Railway, see Admin -> Hosting); the engine decides whether a fetch is due
 -- (auto fetch on, chosen frequency, trading-day window). Monitoring/alerting stays with the
 -- GitHub health check; this job does not keep the project from being paused.
 --
@@ -18,7 +18,12 @@ select cron.schedule(
   '*/15 * * * *',
   $$
   select net.http_post(
-    url     := 'https://margin-engine-staging.onrender.com/api/ops/fetch-tick',
+    -- the preferred engine host (Admin -> Hosting); each host records its own address at startup
+    url     := coalesce(
+                 (select trim(both '"' from s.value) from margin.settings s
+                   where s.key = 'backend_url_' || coalesce((select trim(both '"' from value) from margin.settings
+                                                             where key = 'active_backend'), 'render')),
+                 'https://margin-engine-staging.onrender.com') || '/api/ops/fetch-tick',
     headers := jsonb_build_object(
                  'Content-Type', 'application/json',
                  'X-Ops-Token', (select decrypted_secret from vault.decrypted_secrets where name = 'margin_ops_token')),

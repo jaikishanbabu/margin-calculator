@@ -14,15 +14,25 @@ permissions:
 jobs:
   health:
     runs-on: ubuntu-latest
-    if: vars.STAGING_URL != ''
+    if: vars.STAGING_URL != '' || vars.STAGING_URL_ALT != ''
     steps:
-      - name: Deep health check (allows for Render cold start)
+      - name: Pick a running engine host (Render, else Railway)
+        env:
+          MAIN: ${{ vars.STAGING_URL }}
+          ALT: ${{ vars.STAGING_URL_ALT }}
         run: |
-          for i in 1 2 3 4 5 6; do
-            code=$(curl -s -o health.json -w "%{http_code}" --max-time 90 "${{ vars.STAGING_URL }}/api/health?deep=1" || true)
-            [ "$code" = "200" ] && break
-            echo "attempt $i: HTTP $code - waiting"; sleep 30
+          for round in 1 2 3 4 5 6; do
+            for u in "$MAIN" "$ALT"; do
+              [ -n "$u" ] || continue
+              if curl -sf --max-time 90 "$u/api/health" -o /dev/null; then echo "ENGINE=$u" >> "$GITHUB_ENV"; echo "using $u"; exit 0; fi
+            done
+            sleep 30
           done
+          echo "::error::No engine host answered (Render and Railway both down?)"; exit 1
+      - name: Deep health check
+        run: |
+          code=$(curl -s -o health.json -w "%{http_code}" --max-time 90 "$ENGINE/api/health?deep=1" || true)
+          [ "$code" = "200" ] || { cat health.json || true; echo "::error::Staging unhealthy (HTTP $code). Supabase may be paused."; exit 1; }
           cat health.json || true
           [ "$code" = "200" ] || { echo "::error::Staging unhealthy (HTTP $code). Supabase may be paused or Render down."; exit 1; }
           python3 - <<'PY'

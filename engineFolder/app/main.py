@@ -11,6 +11,7 @@ from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -89,10 +90,11 @@ def endpoint(*roles, ops=False, allow_pending_password=False, fetcher_job=False)
 
 # ---------------------------------------------------------------- public
 async def health(request):
-    out = {"ok": True, "env": config.APP_ENV, "version": config.APP_VERSION, "api": API_VERSION}
+    out = {"ok": True, "env": config.APP_ENV, "version": config.APP_VERSION, "api": API_VERSION, "host": config.HOST_NAME}
     try:
         await run_in_threadpool(db.query_one, "SELECT 1 AS one")
         out["db"] = "ok"
+        out["active_backend"] = await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND)
     except Exception:
         out["ok"], out["db"] = False, "unreachable"
     if request.query_params.get("deep") == "1":
@@ -270,11 +272,24 @@ async def backups_restore_test(request, user):
     return ok(await run_in_threadpool(backup.restore_test, user["username"]))
 
 
+BACKENDS = ("render", "railway")     # hosts the engine can run on; the UIs follow `active_backend`
+DEFAULT_BACKEND = "render"
+
+
 @endpoint("superadmin")
 async def settings_update(request, user):
     b = await body_json(request)
     allowed = {"backup_retention_count": (int, 2, 520)}
     changed = {}
+    if "active_backend" in b:
+        v = str(b.pop("active_backend"))
+        if v not in BACKENDS:
+            raise ValueError(f"active_backend must be one of {', '.join(BACKENDS)}")
+        before = await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND)
+        await run_in_threadpool(db.set_setting, "active_backend", v)
+        await run_in_threadpool(audit.log, user["username"], "backend_switched",
+                                {"from": before, "to": v, "via": config.HOST_NAME}, client_ip(request))
+        changed["active_backend"] = v
     for k, v in b.items():
         if k not in allowed:
             raise ValueError(f"Unknown setting {k}")
@@ -284,13 +299,18 @@ async def settings_update(request, user):
             raise ValueError(f"{k} must be between {lo} and {hi}")
         await run_in_threadpool(db.set_setting, k, v)
         changed[k] = v
-    await run_in_threadpool(audit.log, user["username"], "settings_changed", changed, client_ip(request))
+    if set(changed) - {"active_backend"}:
+        await run_in_threadpool(audit.log, user["username"], "settings_changed",
+                                {k: v for k, v in changed.items() if k != "active_backend"}, client_ip(request))
     return ok({"settings": changed})
 
 
 @endpoint("admin", "superadmin")
 async def settings_get(request, user):
-    return ok({"settings": {"backup_retention_count": await run_in_threadpool(db.get_setting, "backup_retention_count", backup.DEFAULT_BACKUP_RETENTION)}})
+    return ok({"settings": {
+        "backup_retention_count": await run_in_threadpool(db.get_setting, "backup_retention_count", backup.DEFAULT_BACKUP_RETENTION),
+        "active_backend": await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND),
+        "backends": list(BACKENDS), "this_host": config.HOST_NAME}})
 
 
 # ---------------------------------------------------------------- ops (scheduled GitHub jobs)
@@ -750,6 +770,12 @@ async def lifespan(app):
     config.validate()
     db.init()
     auth.ensure_superadmin()
+    if config.PUBLIC_URL and config.HOST_NAME in BACKENDS:
+        try:   # lets the Supabase scheduler (ops/supabase_scheduler.sql) call whichever host is preferred
+            if db.get_setting(f"backend_url_{config.HOST_NAME}") != config.PUBLIC_URL:
+                db.set_setting(f"backend_url_{config.HOST_NAME}", config.PUBLIC_URL)
+        except Exception:
+            pass
     yield
 
 
@@ -821,7 +847,8 @@ if config.SERVE_STATIC:
         Mount("/calculator", StaticFiles(directory=str(config.REPO_DIR / "marginCalc"), html=True), name="calc"),
     ]
 
-middleware = [Middleware(SecurityHeaders)]
+# gzip: JSON (contract lists, margin breakdowns) shrinks ~5-10x; outbound bytes are what Render meters.
+middleware = [Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)]
 if config.CORS_ORIGINS:
     middleware.append(Middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["GET", "POST", "PATCH", "PUT"],
                                  allow_headers=["Authorization", "Content-Type"], max_age=600))

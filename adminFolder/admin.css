@@ -366,3 +366,9 @@ button.busy::after{content:"";position:absolute;left:50%;top:50%;width:14px;heig
 button.secondary.busy::after,button.link.busy::after{border-color:var(--primary-18);border-top-color:var(--primary)}
 @media (prefers-reduced-motion:reduce){.spinner,button.busy::after{animation-duration:2s}.top-bar::before{animation:none;left:0;width:100%;opacity:.6}}
 .v-rules{max-width:720px}.v-rules .v-tr{grid-template-columns:2.6fr 1fr 1fr}
+/* Hosting tab */
+.host-list{display:grid;gap:12px;margin-top:12px}
+.host-row{display:grid;gap:6px;margin:0;padding:16px 18px}
+.host-row.ok{border-color:var(--good)} .host-row.bad{border-color:var(--bad)}
+.host-row .pill{margin-left:8px}
+.host-row button{justify-self:start;margin-top:4px}

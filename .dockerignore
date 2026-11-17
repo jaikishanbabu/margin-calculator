@@ -1,0 +1,8 @@
+.git
+.github
+**/__pycache__
+**/.pytest_cache
+engineFolder/tests
+engineFolder/validation
+docs
+*.db

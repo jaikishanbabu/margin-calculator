@@ -4,7 +4,6 @@
 //   GET  /api/margin/contracts?segment=NFO&symbol= expiries, lot sizes, strikes
 //   POST /api/margin                               the basket's margin
 (function () {
-  const API = (window.MARGIN_API_BASE || "").replace(/\/$/, "");
   const $ = s => document.querySelector(s);
   // Markets and their exchanges. live: margins are served (validated against brokers); the rest
   // are listed but greyed out until each passes its own validation.
@@ -46,7 +45,7 @@
   async function api(path, opts = {}) {
     pending++; $("#topBar").classList.add("on");
     try {
-      const r = await fetch(API + path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {},
+      const r = await window.MarginBackend.fetch(path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {},
                                           body: opts.body ? JSON.stringify(opts.body) : undefined });
       let j = null; try { j = await r.json(); } catch (_) { /* not JSON */ }
       if (!r.ok) { const e = new Error((j && j.error) || `HTTP ${r.status}`); e.status = r.status; throw e; }
@@ -416,6 +415,7 @@
 
   (async () => {                        // which exchanges are served (validated) right now
     try {
+      if (window.MarginBackend.multi()) await window.MarginBackend.init();   // pick Render/Railway
       const r = await api("/api/margin/segments");
       for (const m of Object.values(MARKETS)) for (const x of m.exchanges)
         if (r.segments[x.seg]) x.live = r.segments[x.seg].served;
