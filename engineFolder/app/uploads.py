@@ -57,8 +57,11 @@ def suggest(filename):
 
 
 def process(user, filename, data: bytes, segment, file_type, trade_date=None, cycle=None, ip=None, replace=False,
-            source_ref=None, fetcher=None):
-    """fetcher: None for people; for the exchange fetcher a dict(url=..., run_id=...). Fetcher uploads record the
+            source_ref=None, fetcher=None, staged=None):
+    """staged: (key, encoding, payload) when the fetcher already put the file into storage itself under
+    incoming/ (so the bytes never left the engine host). The archive copy is then made inside storage.
+
+    fetcher: None for people; for the exchange fetcher a dict(url=..., run_id=...). Fetcher uploads record the
     cycle the exchange published the file under (cycle_source "exchange") and their source_ref, so several files of
     one type and date (e.g. NSE VaR batches) can coexist."""
     if segment not in segments.SEGMENTS:
@@ -121,14 +124,21 @@ def process(user, filename, data: bytes, segment, file_type, trade_date=None, cy
     store = get_store()
     key = f"originals/{segment}/{prov['trade_date']}/{file_type}/{sha[:16]}_{fname}"
     encoding, payload = "identity", data
-    if info["kind"] in ("xml", "text", "json") and len(data) > config.ARCHIVE_COMPRESS_OVER_KB * 1024:
+    if staged:
+        encoding, payload = staged[1], staged[2]
+        if encoding == "gzip":
+            key += ".gz"
+    elif info["kind"] in ("xml", "text", "json") and len(data) > config.ARCHIVE_COMPRESS_OVER_KB * 1024:
         encoding, payload, key = "gzip", gzip.compress(data, compresslevel=6, mtime=0), key + ".gz"
     if len(payload) > config.ARCHIVE_OBJECT_MAX_MB * 1024 * 1024:
         raise UploadRejected(f"File is too large to archive ({len(payload) / 1048576:.0f} MB after compression; "
                              f"the storage limit is {config.ARCHIVE_OBJECT_MAX_MB} MB per file). "
                              "Upload the exchange's .zip/.gz version instead.")
     try:
-        store.put_verified(key, payload, "application/gzip" if encoding == "gzip" else "application/octet-stream")
+        if staged:
+            store.copy(staged[0], key)       # inside storage: no bytes leave the engine host
+        else:
+            store.put_verified(key, payload, "application/gzip" if encoding == "gzip" else "application/octet-stream")
         if decode(store.get(key), encoding) != data:
             raise StorageError("Archived copy does not decode to the original bytes")
     except AlreadyExists:

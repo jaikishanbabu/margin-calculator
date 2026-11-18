@@ -12,16 +12,26 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    if: vars.STAGING_URL != ''
+    if: vars.STAGING_URL != '' || vars.STAGING_URL_ALT != ''
     steps:
-      - name: Wake the service (Render cold start)
+      - name: Pick a running engine host (Render, else Railway)
+        env:
+          MAIN: ${{ vars.STAGING_URL }}
+          ALT: ${{ vars.STAGING_URL_ALT }}
         run: |
-          for i in 1 2 3 4 5 6; do curl -sf --max-time 90 "${{ vars.STAGING_URL }}/api/health" && break; sleep 30; done
+          for round in 1 2 3 4 5 6; do
+            for u in "$MAIN" "$ALT"; do
+              [ -n "$u" ] || continue
+              if curl -sf --max-time 90 "$u/api/health" -o /dev/null; then echo "ENGINE=$u" >> "$GITHUB_ENV"; echo "using $u"; exit 0; fi
+            done
+            sleep 30
+          done
+          echo "::error::No engine host answered (Render and Railway both down?)"; exit 1
       - name: Backup
         run: |
-          code=$(curl -s -o b.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "${{ vars.STAGING_URL }}/api/ops/backup")
+          code=$(curl -s -o b.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "$ENGINE/api/ops/backup")
           cat b.json; [ "$code" = "200" ] || { echo "::error::Backup failed (HTTP $code)"; exit 1; }
       - name: Restore test
         run: |
-          code=$(curl -s -o r.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "${{ vars.STAGING_URL }}/api/ops/restore-test")
+          code=$(curl -s -o r.json -w "%{http_code}" --max-time 300 -X POST -H "X-Ops-Token: ${{ secrets.STAGING_OPS_TOKEN }}" "$ENGINE/api/ops/restore-test")
           cat r.json; [ "$code" = "200" ] || { echo "::error::Restore test failed (HTTP $code)"; exit 1; }

@@ -9,6 +9,10 @@ on:
       run_id:
         description: "Run id created by the engine"
         required: true
+      engine_url:
+        description: "Address of the engine that created the run (optional)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -32,10 +36,20 @@ jobs:
           path: engineFolder/validation/data
           key: nfo-validation-data-v1-${{ github.run_id }}     # saved again each run (adds missing days)
           restore-keys: nfo-validation-data-v1-
+      # Only known engine addresses receive the fetcher token (repo variables STAGING_URL / STAGING_URL_ALT).
+      - name: Pick engine address
+        env:
+          ASKED: ${{ inputs.engine_url }}
+          MAIN: ${{ vars.STAGING_URL }}
+          ALT: ${{ vars.STAGING_URL_ALT }}
+        run: |
+          url="$MAIN"
+          if [ -n "$ASKED" ] && { [ "$ASKED" = "$MAIN" ] || [ "$ASKED" = "$ALT" ]; }; then url="$ASKED"; fi
+          [ -n "$ASKED" ] && [ "$ASKED" != "$url" ] && echo "::warning::engine_url $ASKED is not a known engine - using $url"
+          echo "ENGINE_URL=$url" >> "$GITHUB_ENV"
       - name: Validate (run ${{ inputs.run_id }})
         run: cd engineFolder && python -m app.validate_job --run-id "${{ inputs.run_id }}"
         env:
-          ENGINE_URL: ${{ vars.STAGING_URL }}
           FETCHER_TOKEN: ${{ secrets.STAGING_FETCHER_TOKEN }}
       - name: Keep the report
         if: always()

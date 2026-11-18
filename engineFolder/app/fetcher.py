@@ -186,7 +186,10 @@ def dispatch_github(run_id):
     r = db.query_one("SELECT trigger FROM fetch_runs WHERE id = ?", (run_id,))
     workflow = "validate.yml" if r and r["trigger"] == "validate" else "fetcher.yml"
     url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/{workflow}/dispatches"
-    body = json.dumps({"ref": config.GITHUB_REF, "inputs": {"run_id": str(run_id)}}).encode()
+    inputs = {"run_id": str(run_id)}
+    if config.PUBLIC_URL:
+        inputs["engine_url"] = config.PUBLIC_URL     # the job reports back to the engine that started it
+    body = json.dumps({"ref": config.GITHUB_REF, "inputs": inputs}).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
         "Authorization": f"Bearer {config.GITHUB_DISPATCH_TOKEN}", "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "margin-engine"})
@@ -340,6 +343,11 @@ def job_finished(run_id, status="done", message=""):
         c.execute("UPDATE fetch_runs SET status = ?, finished_at = ?, message = ?, summary = ? WHERE id = ?",
                   (status, iso(), str(message)[:500], json.dumps(counts), run_id))
         audit.append(c, "auto-fetcher", "fetch_run_finished", {"run_id": run_id, "status": status, "counts": counts})
+    try:   # leftovers of direct uploads (app/transfer.py); keep files of runs still going
+        from .transfer import sweep_incoming
+        sweep_incoming([r["id"] for r in db.query("SELECT id FROM fetch_runs WHERE status = 'running'")])
+    except Exception:
+        pass
     return get_run(run_id, with_items=False)
 
 

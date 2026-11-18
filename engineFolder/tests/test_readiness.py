@@ -309,3 +309,31 @@ def test_prices_and_risk_files_never_checked(tmp_path):
     info = _cra("NFO", {"span_trade_date": "2026-11-16", "bhavcopy_trade_date": "2026-11-01",
                         "settlement_trade_date": "2026-11-01"}, tmp_path)
     assert "fallback_inputs" not in info
+
+
+def test_snapshot_staged_in_storage_is_copied_not_uploaded(rx, monkeypatch):
+    """Direct-transfer path: the job puts the snapshot into storage itself; the engine copies it inside storage."""
+    import requests
+    from app import config, storage
+    from app.storage.supabase import SupabaseStore
+    from fake_supabase import KEY, FakeStorage
+    fake = FakeStorage()
+    monkeypatch.setattr(config, "STORAGE_BACKEND", "supabase")
+    storage.set_store(SupabaseStore(fake.url, KEY, "margin-archive"))
+    try:
+        rid = running_run(rx)
+        blob = gzip.compress(b"sqlite-bytes")
+        slot = rx["c"].post(f"/api/fetcher/runs/{rid}/stage", json={"filename": "NFO.sqlite.gz"}, headers=rx["job"]).json()["slot"]
+        assert requests.put(slot["url"], data=blob).status_code == 200
+        m = {"fingerprint": "fp1", "info": {"trade_date": "2026-11-06"}, "inputs": [],
+             "rules": {"static_rates.yaml": "a" * 64}, "code_version": "abc"}
+        r = rx["c"].post(f"/api/fetcher/runs/{rid}/snapshot", headers=rx["job"],
+                         data={"segment": "NFO", "basis": "bod", "meta": json.dumps(m), "staged_key": slot["key"]})
+        assert r.status_code == 201, r.text
+        s = r.json()["snapshot"]
+        keys = [k for (_, k) in fake.objects]
+        assert any(k.startswith("snapshots/NFO/") for k in keys) and not any(k.startswith("incoming/") for k in keys)
+        assert s["status"] == "ready"
+    finally:
+        storage.set_store(None)
+        fake.close()

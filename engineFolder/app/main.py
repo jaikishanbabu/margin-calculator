@@ -11,12 +11,13 @@ from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import audit, auth, backup, config, db, fetcher, holidays, margin as margin_mod, readiness, segments, uploads, validation
+from . import audit, auth, backup, config, db, fetcher, holidays, margin as margin_mod, readiness, segments, transfer, uploads, validation
 from .fetcher_map import SEGMENT_CHOICES, SOURCE_MAP
 from .storage import get_store
 
@@ -89,10 +90,11 @@ def endpoint(*roles, ops=False, allow_pending_password=False, fetcher_job=False)
 
 # ---------------------------------------------------------------- public
 async def health(request):
-    out = {"ok": True, "env": config.APP_ENV, "version": config.APP_VERSION, "api": API_VERSION}
+    out = {"ok": True, "env": config.APP_ENV, "version": config.APP_VERSION, "api": API_VERSION, "host": config.HOST_NAME}
     try:
         await run_in_threadpool(db.query_one, "SELECT 1 AS one")
         out["db"] = "ok"
+        out["active_backend"] = await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND)
     except Exception:
         out["ok"], out["db"] = False, "unreachable"
     if request.query_params.get("deep") == "1":
@@ -270,11 +272,24 @@ async def backups_restore_test(request, user):
     return ok(await run_in_threadpool(backup.restore_test, user["username"]))
 
 
+BACKENDS = ("render", "railway")     # hosts the engine can run on; the UIs follow `active_backend`
+DEFAULT_BACKEND = "render"
+
+
 @endpoint("superadmin")
 async def settings_update(request, user):
     b = await body_json(request)
     allowed = {"backup_retention_count": (int, 2, 520)}
     changed = {}
+    if "active_backend" in b:
+        v = str(b.pop("active_backend"))
+        if v not in BACKENDS:
+            raise ValueError(f"active_backend must be one of {', '.join(BACKENDS)}")
+        before = await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND)
+        await run_in_threadpool(db.set_setting, "active_backend", v)
+        await run_in_threadpool(audit.log, user["username"], "backend_switched",
+                                {"from": before, "to": v, "via": config.HOST_NAME}, client_ip(request))
+        changed["active_backend"] = v
     for k, v in b.items():
         if k not in allowed:
             raise ValueError(f"Unknown setting {k}")
@@ -284,13 +299,18 @@ async def settings_update(request, user):
             raise ValueError(f"{k} must be between {lo} and {hi}")
         await run_in_threadpool(db.set_setting, k, v)
         changed[k] = v
-    await run_in_threadpool(audit.log, user["username"], "settings_changed", changed, client_ip(request))
+    if set(changed) - {"active_backend"}:
+        await run_in_threadpool(audit.log, user["username"], "settings_changed",
+                                {k: v for k, v in changed.items() if k != "active_backend"}, client_ip(request))
     return ok({"settings": changed})
 
 
 @endpoint("admin", "superadmin")
 async def settings_get(request, user):
-    return ok({"settings": {"backup_retention_count": await run_in_threadpool(db.get_setting, "backup_retention_count", backup.DEFAULT_BACKUP_RETENTION)}})
+    return ok({"settings": {
+        "backup_retention_count": await run_in_threadpool(db.get_setting, "backup_retention_count", backup.DEFAULT_BACKUP_RETENTION),
+        "active_backend": await run_in_threadpool(db.get_setting, "active_backend", DEFAULT_BACKEND),
+        "backends": list(BACKENDS), "this_host": config.HOST_NAME}})
 
 
 # ---------------------------------------------------------------- ops (scheduled GitHub jobs)
@@ -543,11 +563,14 @@ async def job_finish(request, user):
 
 @endpoint(fetcher_job=True)
 async def job_upload(request, user):
-    form = await request.form(max_files=1, max_fields=12)
+    form = await request.form(max_files=1, max_fields=14)
     f = form.get("file")
+    staged_key = str(form.get("staged_key", "")) or None
+    rid = int(request.path_params["rid"])
+    if staged_key:
+        return await _job_upload_staged(request, form, rid, staged_key)
     if f is None or not hasattr(f, "read"):
         return err("No file attached")
-    rid = int(request.path_params["rid"])
     run = await run_in_threadpool(fetcher.get_run, rid, False)
     if not run or run["status"] != "running":
         return err("Run is not running", 409)
@@ -572,6 +595,44 @@ async def job_upload(request, user):
         str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
         {"url": str(form.get("url", ""))[:400], "run_id": rid})
     return ok({"upload": result}, 201)
+
+
+async def _job_upload_staged(request, form, rid, staged_key):
+    """Same pipeline as job_upload, but the bytes are already in storage under incoming/<rid>/."""
+    try:
+        run = await run_in_threadpool(fetcher.get_run, rid, False)
+        if not run or run["status"] != "running":
+            return err("Run is not running", 409)
+        sid = str(form.get("source_id", ""))
+        if sid not in SOURCE_MAP:
+            return err("Unknown source")
+        segment, file_type = SOURCE_MAP[sid]
+        enc = str(form.get("staged_encoding", "identity"))
+        try:
+            payload, data = await run_in_threadpool(transfer.load_staged, rid, staged_key, enc, transfer.max_upload_bytes())
+        except transfer.TransferError as e:
+            return err(str(e), 400)
+        actor = {"username": "auto-fetcher" if run["trigger"] == "auto" else f"fetcher ({run['requested_by']})"}
+        result = await run_in_threadpool(
+            uploads.process, actor, str(form.get("filename", "")) or staged_key.split("_", 1)[-1], data, segment, file_type,
+            fetcher.upload_trade_date(run, str(form.get("trade_date", ""))), str(form.get("cycle", "")) or None,
+            client_ip(request), str(form.get("replace", "")) == "1", str(form.get("source_ref", ""))[:120] or None,
+            {"url": str(form.get("url", ""))[:400], "run_id": rid}, (staged_key, enc, payload))
+        return ok({"upload": result}, 201)
+    finally:
+        await run_in_threadpool(transfer.discard, rid, staged_key)
+
+
+@endpoint(fetcher_job=True)
+async def job_stage(request, user):
+    """Signed upload link so the job can put a file straight into storage (see app/transfer.py)."""
+    rid = int(request.path_params["rid"])
+    run = await run_in_threadpool(fetcher.get_run, rid, False)
+    if not run or run["status"] != "running":
+        return err("Run is not running", 409)
+    b = await body_json(request)
+    slot = await run_in_threadpool(transfer.stage_slot, rid, str(b.get("filename", "")) or "file")
+    return ok({"slot": slot})
 
 
 @endpoint(fetcher_job=True)
@@ -616,7 +677,12 @@ async def job_build_inputs(request, user):
 
 @endpoint(fetcher_job=True)
 async def job_original(request, user):
-    name, data = await run_in_threadpool(readiness.original, int(request.path_params["uid"]))
+    uid = int(request.path_params["uid"])
+    if request.query_params.get("link") == "1":
+        link = await run_in_threadpool(readiness.original_link, uid)
+        if link:
+            return ok({"link": link})
+    name, data = await run_in_threadpool(readiness.original, uid)
     return Response(data, media_type="application/octet-stream",
                     headers={"x-filename": uploads.safe_filename(name)})
 
@@ -633,6 +699,19 @@ async def job_snapshot(request, user):
         assert isinstance(meta, dict)
     except Exception:
         return err("meta must be a JSON object")
+    staged_key = str(form.get("staged_key", "")) or None
+    if staged_key:
+        try:
+            try:
+                blob, _ = await run_in_threadpool(transfer.load_staged, rid, staged_key, "identity",
+                                                  readiness.MAX_SNAPSHOT_MB * 1024 * 1024)
+            except transfer.TransferError as e:
+                return err(str(e), 400)
+            snap = await run_in_threadpool(readiness.record, rid, str(form.get("segment", "")).upper(),
+                                           str(form.get("basis", "")), meta, blob, staged_key)
+            return ok({"snapshot": snap}, 201)
+        finally:
+            await run_in_threadpool(transfer.discard, rid, staged_key)
     if str(form.get("unchanged", "")) == "1":
         await run_in_threadpool(readiness.mark_unchanged, str(form.get("segment", "")).upper(),
                                 str(form.get("basis", "")), meta.get("fingerprint", ""))
@@ -691,6 +770,12 @@ async def lifespan(app):
     config.validate()
     db.init()
     auth.ensure_superadmin()
+    if config.PUBLIC_URL and config.HOST_NAME in BACKENDS:
+        try:   # lets the Supabase scheduler (ops/supabase_scheduler.sql) call whichever host is preferred
+            if db.get_setting(f"backend_url_{config.HOST_NAME}") != config.PUBLIC_URL:
+                db.set_setting(f"backend_url_{config.HOST_NAME}", config.PUBLIC_URL)
+        except Exception:
+            pass
     yield
 
 
@@ -729,6 +814,7 @@ routes = [
     Route("/api/fetcher/have", job_have),
     Route("/api/fetcher/runs/{rid:int}/items", job_items, methods=["POST"]),
     Route("/api/fetcher/runs/{rid:int}/upload", job_upload, methods=["POST"]),
+    Route("/api/fetcher/runs/{rid:int}/stage", job_stage, methods=["POST"]),
     Route("/api/fetcher/build/inputs", job_build_inputs),
     Route("/api/fetcher/calendar", job_calendar),
     Route("/api/fetcher/runs/{rid:int}/validation", job_validation, methods=["POST"]),
@@ -761,7 +847,8 @@ if config.SERVE_STATIC:
         Mount("/calculator", StaticFiles(directory=str(config.REPO_DIR / "marginCalc"), html=True), name="calc"),
     ]
 
-middleware = [Middleware(SecurityHeaders)]
+# gzip: JSON (contract lists, margin breakdowns) shrinks ~5-10x; outbound bytes are what Render meters.
+middleware = [Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)]
 if config.CORS_ORIGINS:
     middleware.append(Middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["GET", "POST", "PATCH", "PUT"],
                                  allow_headers=["Authorization", "Content-Type"], max_age=600))

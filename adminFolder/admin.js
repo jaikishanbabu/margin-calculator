@@ -2,7 +2,7 @@
 // Admin UI. All server data is inserted with textContent (never innerHTML) to prevent XSS.
 // The login token lives in sessionStorage only (gone when the tab closes).
 (function () {
-  const API = (window.MARGIN_API_BASE || "").replace(/\/$/, "");
+  const BE = window.MarginBackend;     // backend.js: Render/Railway choice + fallback
   const $ = (s) => document.querySelector(s);
   let token = sessionStorage.getItem("mc_token") || "";
   let me = null, meta = null;
@@ -117,7 +117,7 @@
     const headers = Object.assign({}, opts.headers || {});
     if (token) headers["Authorization"] = "Bearer " + token;
     if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
-    const res = await fetch(API + path, { method: opts.method || "GET", headers, body: opts.body, credentials: "omit" });
+    const res = await BE.fetch(path, { method: opts.method || "GET", headers, body: opts.body });
     let data = {};
     try { data = await res.json(); } catch (_) {}
     if (res.status === 401 && path !== "/api/auth/login") { logout(); throw new Error("Session expired - log in again"); }
@@ -136,8 +136,9 @@
   async function start() {
     const slow = setTimeout(() => { $("#bootText").textContent = "Waking the server… on the free plan this can take up to a minute."; }, 4000);
     try {
-      const h = await fetch(API + "/api/health").then(r => r.json());
-      $("#envBadge").textContent = h.env || "";
+      const h = await BE.init();
+      if (!h || !h.reachable) throw new Error("offline");
+      $("#envBadge").textContent = (h.env || "") + (BE.multi() ? " · " + BE.current() : "");
     } catch (_) { $("#envBadge").textContent = "offline"; }
     clearTimeout(slow);
     if (!token) { bootDone(); return logout(); }
@@ -208,9 +209,47 @@
     if (name !== "ready") clearTimeout(rdTimer);
     if (name !== "holidays") clearTimeout(hcTimer);
     ({ log: loadLog, audit: loadAudit, backups: loadBackups, users: loadUsers, fetcher: loadFetcher, ready: loadReady,
-       holidays: loadHolidays }[name] || (() => {}))();
+       holidays: loadHolidays, hosting: loadHosting }[name] || (() => {}))();
   }
   $("#nav").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
+
+  // ------------------------------------------------------------ hosting (SuperAdmin): Render <-> Railway
+  async function loadHosting() {
+    const box = $("#hostList");
+    placeholder(box, "Checking both hosts…");
+    let active = null;
+    try { active = (await api("/api/admin/settings")).settings.active_backend; } catch (e) { setMsg($("#hostMsg"), e.message, false); }
+    const names = BE.multi() ? BE.names() : [];
+    await Promise.all(names.map(n => BE.probe(n, 15000)));
+    const probes = BE.probes();
+    box.textContent = "";
+    if (!names.length) {
+      box.append(el("p", { class: "hint" }, "This page is served by the engine itself, so it always uses that host. " +
+        "Open the GitHub Pages copy of the admin to switch hosts."));
+      return;
+    }
+    for (const n of names) {
+      const p = probes[n] || {};
+      const state = !p.reachable ? `Not answering (${p.error || "down"})` : p.ok ? "Running" : "Answering, but unhealthy";
+      const ver = p.version ? String(p.version).slice(0, 7) : "";
+      const btn = el("button", { type: "button", class: n === active ? "" : "secondary", disabled: n === active ? "" : null },
+        n === active ? "Preferred host" : "Make preferred");
+      if (n !== active) btn.addEventListener("click", async () => {
+        if (!confirm(`Switch the preferred engine host to ${n}?`)) return;
+        try {
+          await api("/api/admin/settings", { method: "PUT", json: { active_backend: n } });
+          setMsg($("#hostMsg"), `Preferred host is now ${n}. Logged in the audit log.`, true);
+          await BE.init(); loadHosting();
+        } catch (e) { setMsg($("#hostMsg"), e.message, false); }
+      });
+      box.append(el("div", { class: "card host-row" + (p.reachable && p.ok ? " ok" : " bad") },
+        el("div", {}, el("b", {}, n.charAt(0).toUpperCase() + n.slice(1)),
+          n === BE.current() ? el("span", { class: "pill" }, "serving you now") : null),
+        el("div", { class: "hint" }, BE.url(n)),
+        el("div", {}, state + (ver ? ` · version ${ver}` : "") + (p.reachable && p.ms != null ? ` · ${p.ms} ms` : "")),
+        btn));
+    }
+  }
 
   // ------------------------------------------------------------ upload form: segment -> file -> attach
   const upSeg = $("#upSegment"), upType = $("#upType"), upFile = $("#upFile"), upDate = $("#upDate"),

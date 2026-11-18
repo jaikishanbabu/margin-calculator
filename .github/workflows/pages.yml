@@ -1,0 +1,60 @@
+# Publishes the admin and calculator pages on GitHub Pages (free, not on Render's metered bandwidth).
+#   https://<owner>.github.io/<repo>/admin/        and        .../calculator/
+# The pages talk to the engine on Render or Railway (backend.js picks one, falls back to the other).
+# One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
+name: Pages (admin + calculator)
+
+on:
+  push:
+    branches: [develop]
+    paths: ["adminFolder/**", "marginCalc/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        env:
+          RENDER_URL: ${{ vars.STAGING_URL }}          # engine on Render
+          RAILWAY_URL: ${{ vars.STAGING_URL_ALT }}     # engine on Railway (optional)
+        run: |
+          mkdir -p _site
+          cp -r adminFolder _site/admin
+          cp -r marginCalc _site/calculator
+          python3 - <<'PY'
+          import json, os, re
+          bases = {}
+          for name, var in (("render", "RENDER_URL"), ("railway", "RAILWAY_URL")):
+              u = os.environ.get(var, "").strip().rstrip("/")
+              if u:
+                  assert re.fullmatch(r"https://[A-Za-z0-9.-]+", u), f"{var} must be a plain https origin"
+                  bases[name] = u
+          assert bases, "Set the repo variable STAGING_URL (and STAGING_URL_ALT for Railway)"
+          js = ("// Written by .github/workflows/pages.yml - engine addresses only, never credentials.\n"
+                f"window.MARGIN_API_BASES = {json.dumps(bases)};\n")
+          for d in ("_site/admin", "_site/calculator"):
+              open(f"{d}/config.js", "w").write(js)
+          open("_site/index.html", "w").write('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" '
+                                              'content="0; url=calculator/"><a href="calculator/">Margin calculator</a>\n')
+          print("engine hosts:", ", ".join(bases))
+          PY
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _site }
+      - id: deployment
+        uses: actions/deploy-pages@v4

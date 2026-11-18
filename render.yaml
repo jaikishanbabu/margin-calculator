@@ -21,6 +21,8 @@ services:
         value: staging
       - key: SERVE_STATIC
         value: "1"
+      - key: CORS_ORIGINS          # admin + calculator pages on GitHub Pages (docs/HOSTING.md)
+        value: https://jaikishanbabu.github.io
       - key: STORAGE_BACKEND
         value: supabase
       - key: SUPABASE_URL

@@ -107,7 +107,8 @@ def test_health_exposes_nothing_sensitive(client, monkeypatch):
     from app import db as _db
     r = client.get("/api/health?deep=1")
     body = r.text
-    assert set(r.json()) <= {"ok", "env", "version", "api", "db", "storage", "backup"}
+    # host / active_backend: which engine host answered and which one the SuperAdmin prefers (not secret)
+    assert set(r.json()) <= {"ok", "env", "version", "api", "db", "storage", "backup", "host", "active_backend"}
     for secret in (config.SUPERADMIN_PASSWORD, config.OPS_TOKEN, "pbkdf2", "postgres", "Traceback"):
         assert secret not in body
     # even when the database is down, only a status word comes back
