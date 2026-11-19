@@ -22,12 +22,13 @@ from .storage import get_store
 
 SERVED = ("NFO",)                 # always served (validated, labelled when not)
 GATED = ("NSECM",)                # served only once their own broker validation has passed
+NOT_PUBLIC = ("staging", "dev")   # environments where gated segments show straight away (labelled)
 
 
 def served(segment):
-    """Gated segments: on staging (not public) straight away, labelled not validated; in production
-    only once their own broker validation has passed."""
-    return segment in SERVED or (segment in GATED and (config.APP_ENV == "staging"
+    """Gated segments: on staging and on a local dev copy (neither is public) straight away, labelled
+    not validated; in production only once their own broker validation has passed."""
+    return segment in SERVED or (segment in GATED and (config.APP_ENV in NOT_PUBLIC
                                                        or validation.status(segment)["validated"]))
 
 

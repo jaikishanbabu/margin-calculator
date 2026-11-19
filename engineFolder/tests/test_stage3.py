@@ -234,13 +234,17 @@ def test_nse_cash_is_served_only_once_validated(mx, monkeypatch):
     c = mx["c"]
     rid = running_run(mx, seg="NSECM")
     post_snapshot(mx, rid, seg="NSECM", basis="latest", blob=b"nse-db", info={"span_cycle": "3"})
+    monkeypatch.setattr(config, "APP_ENV", "production")      # public: hidden until validated
     segs = c.get("/api/margin/segments").json()["segments"]
     assert segs["NFO"]["served"] is True and segs["NSECM"]["served"] is False
     order = {"segment": "NSECM", "positions": [{"symbol": "RELIANCE", "side": "buy", "qty": 100}]}
     r = c.post("/api/margin", json=order)
     assert r.status_code == 400 and "validated" in r.json()["error"]
     assert c.get("/api/margin/meta?segment=NSECM").status_code == 503
-    # staging (not public): served straight away, labelled not validated
+    # staging and a local dev copy (not public): served straight away, labelled not validated
+    monkeypatch.setattr(config, "APP_ENV", "dev")
+    assert c.get("/api/margin/segments").json()["segments"]["NSECM"] == {"served": True, "validated": False}
+    assert c.post("/api/margin", json=order).json()["validated"] is False
     monkeypatch.setattr(config, "APP_ENV", "staging")
     assert c.get("/api/margin/segments").json()["segments"]["NSECM"] == {"served": True, "validated": False}
     sm = c.post("/api/margin", json=order).json()
